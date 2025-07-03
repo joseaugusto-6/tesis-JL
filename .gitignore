@@ -5,9 +5,9 @@ __pycache__/
 *.pyc
 
 # Archivos grandes de entrega y modelos
-/static/descargas/*
-*.zip
-*.pt
+#/static/descargas/*
+#*.zip
+#*.pt
 
 # Archivos de credenciales y configuraciones sensibles
 *.json
