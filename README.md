@@ -1,1 +1,2 @@
-# tesisdeteccion-JL
+# TesisJL
+#bienvenido al repo
