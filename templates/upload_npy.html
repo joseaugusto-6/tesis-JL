@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Subir archivo de embeddings (.npy)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* (El mismo CSS bonito de antes...) */
+    body {
+      background: linear-gradient(120deg, #00b4d8, #48cae4, #caf0f8);
+      min-height: 100vh;
+      margin: 0;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      background: #fff;
+      padding: 2.5em 2em 2em 2em;
+      border-radius: 22px;
+      box-shadow: 0 6px 32px 0 rgba(0,0,0,0.12);
+      text-align: center;
+      max-width: 380px;
+      width: 100%;
+    }
+    h2 {
+      color: #0096c7;
+      margin-bottom: 0.5em;
+      letter-spacing: 0.02em;
+    }
+    label {
+      font-size: 1.05em;
+      color: #333;
+    }
+    input[type="text"], input[type="file"] {
+      margin: 1em 0;
+      padding: 0.6em 0.5em;
+      border: 1px solid #eee;
+      border-radius: 9px;
+      width: 100%;
+      background: #f8f8f8;
+    }
+    input[type="submit"] {
+      background: linear-gradient(90deg, #00b4d8, #0096c7);
+      color: #fff;
+      padding: 0.75em 2.3em;
+      font-size: 1.1em;
+      border: none;
+      border-radius: 11px;
+      cursor: pointer;
+      transition: background 0.2s, box-shadow 0.2s;
+      box-shadow: 0 2px 8px rgba(0,180,216,0.13);
+    }
+    input[type="submit"]:hover {
+      background: linear-gradient(90deg, #0096c7, #00b4d8);
+      box-shadow: 0 4px 14px rgba(0,180,216,0.20);
+    }
+    .msg {
+      margin-top: 1.4em;
+      font-weight: 500;
+      color: #34a853;
+      font-size: 1.08em;
+      min-height: 1.2em;
+    }
+    @media (max-width: 600px) {
+      .container {
+        padding: 1.2em 0.5em;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Subir Embeddings de Rostro</h2>
+    <div style="margin-bottom:0.9em;">
+      <b>Usuario logueado:</b> {{ username }}
+      &nbsp; <a href="{{ url_for('logout') }}">Cerrar sesión</a>
+    </div>
+    <form method="POST" enctype="multipart/form-data">
+      <label for="npyfile">Selecciona tu archivo <b>.npy</b> para subir:</label><br>
+      <input type="file" name="npyfile" accept=".npy" id="npyfile" required>
+      <br>
+      <input type="submit" value="Subir archivo">
+    </form>
+    <div class="msg">{{ mensaje }}</div>
+  </div>
+</body>
+</html> 

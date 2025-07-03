@@ -1,0 +1,14 @@
+# Entornos virtuales
+venv*/
+.venv*/
+__pycache__/
+*.pyc
+
+# Archivos grandes de entrega y modelos
+/static/descargas/*
+*.zip
+*.pt
+
+# Archivos de credenciales y configuraciones sensibles
+*.json
+ 

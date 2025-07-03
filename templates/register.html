@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registro de Usuario | Detección de Sospechosos</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(120deg, #f7fafc 0%, #e2eafc 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .register-card {
+            border-radius: 1rem;
+            box-shadow: 0 6px 32px 0 rgba(0,0,0,.09);
+            background: #fff;
+        }
+        .brand-icon {
+            display: inline-block;
+            margin-bottom: .5rem;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card p-4 register-card">
+                <div class="text-center mb-3">
+                    <span class="brand-icon">
+                        <svg width="56" height="56" fill="none" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10" stroke="#2463eb" stroke-width="2"/>
+                            <circle cx="12" cy="10" r="4" stroke="#2463eb" stroke-width="1.5"/>
+                            <path d="M6 20c0-2.5 8-2.5 8 0" stroke="#2463eb" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                    <h2 class="fw-bold text-primary mb-1">Detección de Sospechosos</h2>
+                    <span class="text-secondary">Registro de Usuario</span>
+                </div>
+                {% with messages = get_flashed_messages(with_categories=True) %}
+                  {% if messages %}
+                    {% for category, message in messages %}
+                      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>
+                    {% endfor %}
+                  {% endif %}
+                {% endwith %}
+                <form method="POST" action="{{ url_for('register') }}">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Nombre completo</label>
+                        <input type="text" class="form-control" id="name" name="name" required autofocus>
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Correo electrónico</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Contraseña</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary btn-lg">Registrar</button>
+                    </div>
+                </form>
+                <div class="mt-3 text-center">
+                    <span>¿Ya tienes cuenta?</span>
+                    <a href="{{ url_for('login') }}" class="text-decoration-none fw-bold">Inicia sesión</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

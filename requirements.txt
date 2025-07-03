@@ -1,0 +1,7 @@
+pyqt5
+mtcnn
+keras-facenet
+tensorflow==2.9.1
+numpy==1.26.4
+opencv-python
+pip install pywin32 winshell
