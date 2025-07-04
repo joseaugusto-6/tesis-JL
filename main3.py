@@ -46,6 +46,7 @@ def firestore_check_user(email, password):
         return False
     user = doc.to_dict()
     return check_password_hash(user["password_hash"], password)
+
 # ------------------------ FLASK RUTAS -------------------------------
 @app.route("/")
 def index():
@@ -113,6 +114,47 @@ def upload_npy():
                 mensaje = f"Archivo {original_filename} subido correctamente a la carpeta {user_email_safe}"
     return render_template("upload_npy.html", mensaje=mensaje, username=session.get('user_email', ''))
 
+# ------------------------ API PARA REGISTRAR EVENTOS ------------------------
+@app.route("/api/events/add", methods=["POST"])
+# Puedes añadir @jwt_required() si quieres que las cámaras/RPi se autentiquen
+# con un token JWT válido para registrar eventos. Por ahora, lo dejaremos público
+# para simplificar la integración con la RPi/fire7.py, pero es una vulnerabilidad si no está protegida.
+def add_event():
+    try:
+        data = request.json
+
+        # Validación básica de los datos del evento
+        required_fields = ["person_name", "timestamp", "event_type", "image_url"]
+        if not all(field in data for field in required_fields):
+            return {"msg": "Faltan campos obligatorios para el evento."}, 400
+
+        # Convertir timestamp a objeto datetime si viene como string
+        # Esperamos ISO format: "2023-10-26T10:30:00Z" o "2023-10-26T10:30:00.123Z"
+        try:
+            event_timestamp = datetime.fromisoformat(data["timestamp"].replace('Z', '+00:00'))
+        except ValueError:
+            return {"msg": "Formato de timestamp inválido. Usa ISO 8601."}, 400
+
+        event_data = {
+            "person_name": data["person_name"],
+            "timestamp": event_timestamp, # Guardar como datetime
+            "event_type": data["event_type"], # "entry", "exit", "alarm"
+            "image_url": data["image_url"], # URL pública de la imagen del rostro
+            "event_details": data.get("event_details", ""), # Opcional
+            "device_id": data.get("device_id", "unknown"), # ID de la cámara que generó el evento
+            "recorded_at": firestore.SERVER_TIMESTAMP # Para saber cuándo se recibió en el servidor
+        }
+
+        # Guardar en la colección 'events' en Firestore
+        db.collection('events').add(event_data)
+
+        return {"msg": "Evento registrado correctamente."}, 201
+    except Exception as e:
+        app.logger.error(f"Error al añadir evento: {e}") # Usar app.logger para ver errores
+        return {"msg": f"Error interno del servidor: {str(e)}"}, 500
+
+# ------------------------ FIN API PARA REGISTRAR EVENTOS --------------------
+
 # ------------------------ RUTAS API PARA APP MÓVIL -------------------------------
 
 @app.route("/api/login", methods=["POST"])
@@ -153,6 +195,26 @@ def api_register():
 def protected():
     current_user = get_jwt_identity()
     return {"message": f"Bienvenido, {current_user}! Acceso concedido."}, 200
+
+
+@app.route("/api/events/history", methods=["GET"])
+@jwt_required() # Protege esta ruta con JWT
+def get_event_history():
+    try:
+        # Puedes filtrar por usuario actual (get_jwt_identity()) si los eventos están asociados a usuarios
+        # Por ahora, traeremos todos los eventos (o los más recientes)
+        events_ref = db.collection('events').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100) # Últimos 100 eventos
+        events = []
+        for doc in events_ref.stream():
+            event_data = doc.to_dict()
+            # Convertir timestamp a string ISO para enviar a la app móvil
+            event_data['timestamp'] = event_data['timestamp'].isoformat()
+            events.append(event_data)
+
+        return {"events": events}, 200
+    except Exception as e:
+        app.logger.error(f"Error al obtener historial de eventos: {e}")
+        return {"msg": f"Error interno del servidor: {str(e)}"}, 500
 
 # ----------- API PARA LAS CÁMARAS (NO TOCAR) -------------
 @app.route('/upload', methods=['POST'])
