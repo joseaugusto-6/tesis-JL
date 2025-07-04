@@ -4,23 +4,21 @@ import time
 import cv2
 import numpy as np
 import random
-from datetime import datetime, timezone # Importa timezone
+from datetime import datetime, timezone 
 from mtcnn import MTCNN
 from keras_facenet import FaceNet
 from scipy.spatial.distance import cosine
-import requests # Para enviar eventos al Flask de main3.py
+import requests 
 import torch # Asumiendo que esto es necesario para YOLOv5 y está instalado
 
 import firebase_admin
-from firebase_admin import credentials, storage, messaging # Añade 'messaging'
-from firebase_admin import firestore # Para acceder a Firestore
+from firebase_admin import credentials, storage, messaging
+from firebase_admin import firestore 
 
 # ========== CONFIGURACIÓN FIREBASE ==========
 SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
-# BUCKET_NAME para inicializar firebase_admin.initialize_app (usa .appspot.com)
-FIREBASE_INIT_BUCKET_NAME = 'security-cam-f322b.appspot.com' 
-# BUCKET_NAME para acceso de storage (usa .firebasestorage.app)
-FIREBASE_STORAGE_BUCKET_DOMAIN = 'security-cam-f322b.firebasestorage.app'
+FIREBASE_INIT_BUCKET_NAME = 'security-cam-f322b.firebasestorage.app' # Usando el bucket que funciona para ti
+FIREBASE_STORAGE_BUCKET_DOMAIN = 'security-cam-f322b.firebasestorage.app' # Dominio para construir URLs (consistente)
 
 # Carpeta de imágenes a procesar y de embeddings EN FIREBASE
 FIREBASE_PATH_FOTOS = 'uploads/'             # Fotos subidas por la cámara (ej. uploads/camera001/imagen.jpg)
@@ -48,13 +46,12 @@ cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
 firebase_admin.initialize_app(cred, {
     'credential': cred, # Asegurarse de que las credenciales se pasan así también
     'projectId': 'security-cam-f322b', # Tu ID de proyecto Firebase (confirmado en depuración)
-    'storageBucket': FIREBASE_STORAGE_BUCKET_DOMAIN, # Usa el nombre .appspot.com para la inicialización
+    'storageBucket': FIREBASE_INIT_BUCKET_NAME, # Usando el nombre .firebasestorage.app para la inicialización
 })
 bucket = storage.bucket() # Este bucket es el que usa FIREBASE_INIT_BUCKET_NAME por defecto
 db = firestore.client() # Inicializa el cliente de Firestore
 
 # ========== INICIALIZAR MODELOS ==========
-# Asegúrate de que estos modelos estén correctamente configurados y sus dependencias instaladas
 embedder = FaceNet()
 detector = MTCNN()
 try:
@@ -94,9 +91,7 @@ def descargar_embeddings_firebase():
     blobs = bucket.list_blobs(prefix=FIREBASE_PATH_EMBEDDINGS)
     count = 0
     for blob in blobs:
-        # Asegurarse de no descargar subcarpetas vacías
         if blob.name.endswith('.npy') and not blob.name.endswith('/'):
-            # Construir ruta local, creando directorios intermedios si es necesario
             relative_path = os.path.relpath(blob.name, FIREBASE_PATH_EMBEDDINGS)
             local_dir = os.path.join(CARPETA_LOCAL_EMBEDDINGS, os.path.dirname(relative_path))
             os.makedirs(local_dir, exist_ok=True)
@@ -130,7 +125,6 @@ def descargar_fotos_firebase():
     blobs = bucket.list_blobs(prefix=FIREBASE_PATH_FOTOS)
     imagenes = []
     for blob in blobs:
-        # Ignorar directorios y asegurar que sea un tipo de imagen
         if not blob.name.endswith('/') and (blob.name.lower().endswith(('.jpg', '.jpeg', '.png'))):
             local_path = os.path.join(CARPETA_LOCAL_FOTOS, os.path.basename(blob.name))
             try:
@@ -166,52 +160,29 @@ def enviar_alerta_ifttt(path_local_imagen, event_name, value1, value2_url, value
         print(f"❌ Error al enviar a IFTTT ({event_name}): {e}")
     return url_publica # Devuelve la URL pública para usarla en FCM/Historial
 
-# ========== ENVÍO DE NOTIFICACIONES FCM ==========
-def enviar_notificacion_fcm(user_email, title, body, image_url=None, data=None):
+# ========== NO USADO: ENVÍO DE NOTIFICACIONES FCM DIRECTO (AHORA VÍA GCF) ==========
+# def enviar_notificacion_fcm(user_email, title, body, image_url=None, data=None):
+#     """Esta función ya no se llama directamente, ahora se hace vía trigger_fcm_via_main3"""
+#     pass 
+
+# ========== LLAMAR A LA API DE NOTIFICACIONES EN MAIN3.PY (PARA DISPARAR GCF) ==========
+def trigger_fcm_via_main3(user_email, title, body, image_url=None, custom_data=None):
     try:
-        # Obtener los tokens FCM del usuario desde Firestore
-        user_doc_ref = db.collection('usuarios').document(user_email)
-        user_doc = user_doc_ref.get()
-
-        if not user_doc.exists:
-            print(f"[FCM] Usuario {user_email} no encontrado para enviar notificación.")
-            return
-
-        user_data = user_doc.to_dict()
-        fcm_tokens = user_data.get('fcm_tokens', [])
-
-        if not fcm_tokens:
-            print(f"[FCM] No hay tokens FCM registrados para el usuario {user_email}.")
-            return
-
-        # Construir el mensaje FCM
-        message = messaging.MulticastMessage(
-            tokens=fcm_tokens,
-            notification=messaging.Notification(
-                title=title,
-                body=body,
-                image=image_url # Opcional: URL de la imagen en la notificación (solo para algunos clientes)
-            ),
-            data=data or {} # Datos personalizados, que la app puede leer
-        )
-
-        # Enviar el mensaje
-        response = messaging.send_multicast(message)
-
-        if response.success_count > 0:
-            print(f"[FCM] Notificación enviada con éxito a {response.success_count} dispositivos para {user_email}.")
-        if response.failure_count > 0:
-            print(f"[FCM] Fallo al enviar notificación a {response.failure_count} dispositivos para {user_email}.")
-            for error_response in response.responses:
-                if not error_response.success:
-                    print(f"  [FCM Error] {error_response.exception}")
-                    # Opcional: Si el token es inválido, podrías considerarlo para limpieza
-                    # if isinstance(error_response.exception, messaging.FirebaseError) and \
-                    #    error_response.exception.code == 'messaging/invalid-argument':
-                    #    # Lógica para remover el token inválido del array 'fcm_tokens' del usuario en Firestore
-        
+        payload = {
+            "user_email": user_email,
+            "title": title,
+            "body": body,
+            "image_url": image_url if image_url else "", # Asegurarse de enviar un string no null
+            "data": custom_data if custom_data else {}
+        }
+        # Llama al endpoint de main3.py que a su vez llamará a la Cloud Function
+        response = requests.post(f"{MAIN3_API_BASE_URL}/send_notification_via_gcf", json=payload)
+        if response.status_code == 200:
+            print(f"✅ Petición de notificación enviada a main3.py para {user_email}. Respuesta: {response.json()}")
+        else:
+            print(f"❌ Error al enviar petición de notificación a main3.py para {user_email}: {response.status_code}, {response.text}")
     except Exception as e:
-        print(f"❌ Error al enviar notificación FCM: {e}")
+        print(f"❌ Error de conexión al llamar a main3.py para notificación: {e}")
 
 # ========== GESTIÓN DE EVENTOS PARA EL BACKEND DE LA APP ==========
 def enviar_evento_a_main3(event_data):
@@ -228,7 +199,6 @@ def enviar_evento_a_main3(event_data):
 def get_user_email_by_device_id(device_id):
     """Busca el email del usuario que posee el device_id."""
     try:
-        # Busca en la colección 'usuarios' donde el array 'devices' contenga el device_id
         users_with_device = db.collection('usuarios').where('devices', 'array_contains', device_id).limit(1).stream()
         for user_doc in users_with_device:
             return user_doc.id # El ID del documento del usuario es su email
@@ -386,12 +356,12 @@ def procesar_imagenes():
                         "device_id": device_id
                     }
                     enviar_evento_a_main3(event_data) # Enviar a la API de historial
-                    enviar_notificacion_fcm(
+                    trigger_fcm_via_main3( # <-- ¡Aquí se llama la nueva función!
                         owner_email,
                         "Persona Conocida Detectada",
                         f"{nombre_conocido} fue detectado/a por la cámara {device_id}.",
                         image_url=image_public_url,
-                        data={"event_type": "known_person", "person_name": nombre_conocido, "device_id": device_id}
+                        custom_data={"event_type": "known_person", "person_name": nombre_conocido, "device_id": device_id}
                     )
                 
                 # --- Notificación y Registro de Eventos (Persona Desconocida - Alarma) ---
@@ -411,17 +381,17 @@ def procesar_imagenes():
                                 if item['contador'] >= DETECCIONES_REQUERIDAS and \
                                    (current_utc_time - item.get('ultima_alarma', datetime.min.replace(tzinfo=timezone.utc))).total_seconds() > cooldown_seconds:
                                     
-                                    # ENVIAR ALERTA DE ROSTRO DESCONOCIDO REPETIDO
+                                    # ENVIAR ALERTA DE ROSTRO DESCONOCIDO REPETIDO A IFTTT
                                     alerta_url = enviar_alerta_ifttt(output_local_path, "send_alarm", # Revisa el nombre del evento IFTTT
                                                                      "Rostro desconocido detectado MÚLTIPLES veces",
                                                                      image_public_url,
                                                                      "Alerta por persona desconocida recurrente.")
-                                    enviar_notificacion_fcm(
+                                    trigger_fcm_via_main3( # <-- ¡Aquí se llama la nueva función!
                                         owner_email,
                                         "¡ALERTA DE INTRUSO!",
                                         f"Rostro desconocido detectado en la cámara {device_id}. Detecciones: {item['contador']}.",
                                         image_url=image_public_url,
-                                        data={"event_type": "unknown_person_repeated_alarm", "device_id": device_id}
+                                        custom_data={"event_type": "unknown_person_repeated_alarm", "device_id": device_id}
                                     )
                                     enviar_evento_a_main3({ # Registrar evento en historial de app
                                         "person_name": "Desconocido (Recurrente)",
@@ -447,12 +417,12 @@ def procesar_imagenes():
                                                           "Rostro desconocido detectado",
                                                           image_public_url,
                                                           "Alerta de primera detección de rostro desconocido.")
-                         enviar_notificacion_fcm(
+                         trigger_fcm_via_main3( # <-- ¡Aquí se llama la nueva función!
                             owner_email,
                             "Persona Desconocida Detectada",
                             f"Se detectó un rostro no identificado en la cámara {device_id}.",
                             image_url=image_public_url,
-                            data={"event_type": "unknown_person", "device_id": device_id}
+                            custom_data={"event_type": "unknown_person", "device_id": device_id}
                         )
                          enviar_evento_a_main3({ # Registrar evento en historial de app
                             "person_name": "Desconocido",
@@ -475,12 +445,12 @@ def procesar_imagenes():
                                                      "Persona detectada sin rostro 3 veces",
                                                      image_public_url,
                                                      "Alerta por detección de persona sin rostro")
-                    enviar_notificacion_fcm(
+                    trigger_fcm_via_main3( # <-- ¡Aquí se llama la nueva función!
                         owner_email,
                         "Alerta: Persona sin Rostro",
                         f"Persona detectada sin rostro en cámara {device_id}.",
                         image_url=image_public_url,
-                        data={"event_type": "person_no_face_alarm", "device_id": device_id}
+                        custom_data={"event_type": "person_no_face_alarm", "device_id": device_id}
                     )
                     enviar_evento_a_main3({ # Registrar evento en historial de app
                         "person_name": "Persona sin Rostro",
