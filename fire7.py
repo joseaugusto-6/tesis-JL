@@ -48,7 +48,7 @@ cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
 firebase_admin.initialize_app(cred, {
     'credential': cred, # Asegurarse de que las credenciales se pasan así también
     'projectId': 'security-cam-f322b', # Tu ID de proyecto Firebase (confirmado en depuración)
-    'storageBucket': FIREBASE_INIT_BUCKET_NAME, # Usa el nombre .appspot.com para la inicialización
+    'storageBucket': FIREBASE_INIT_BUCKET_DOMAIN, # Usa el nombre .appspot.com para la inicialización
 })
 bucket = storage.bucket() # Este bucket es el que usa FIREBASE_INIT_BUCKET_NAME por defecto
 db = firestore.client() # Inicializa el cliente de Firestore
