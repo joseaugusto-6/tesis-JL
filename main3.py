@@ -8,6 +8,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'  # Cambia esto por algo más seguro en producción
 
+# Configuración JWT
+app.config["JWT_SECRET_KEY"] = "admin" # ¡Cambia esto por una clave única y segura!
+jwt = JWTManager(app)
+
 # Configuración de Google Cloud
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "security-cam-f322b-8adcddbcb279.json"
 BUCKET_NAME = "security-cam-f322b.firebasestorage.app"
@@ -108,6 +112,46 @@ def upload_npy():
                 mensaje = f"Archivo {original_filename} subido correctamente a la carpeta {user_email_safe}"
     return render_template("upload_npy.html", mensaje=mensaje, username=session.get('user_email', ''))
 
+# ------------------------ RUTAS API PARA APP MÓVIL -------------------------------
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    email = request.json.get("email", None)
+    password = request.json.get("password", None)
+
+    if not email or not password:
+        return {"msg": "Faltan email o contraseña"}, 400
+
+    if firestore_check_user(email, password):
+        access_token = create_access_token(identity=email)
+        return {"access_token": access_token}, 200
+    else:
+        return {"msg": "Credenciales inválidas"}, 401
+
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    name = request.json.get("name", None)
+    email = request.json.get("email", None)
+    password = request.json.get("password", None)
+
+    if not name or not email or not password:
+        return {"msg": "Completa todos los campos"}, 400
+
+    if firestore_user_exists(email):
+        return {"msg": "Ya existe un usuario con ese correo"}, 409 # Conflict
+
+    try:
+        firestore_create_user(name, email, password)
+        return {"msg": "Usuario registrado correctamente"}, 201 # Created
+    except Exception as e:
+        return {"msg": f"Error al registrar usuario: {str(e)}"}, 500
+
+# Ejemplo de ruta protegida (para probar JWT)
+@app.route("/api/protected", methods=["GET"])
+@jwt_required()
+def protected():
+    current_user = get_jwt_identity()
+    return {"message": f"Bienvenido, {current_user}! Acceso concedido."}, 200
 
 # ----------- API PARA LAS CÁMARAS (NO TOCAR) -------------
 @app.route('/upload', methods=['POST'])
