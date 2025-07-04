@@ -201,9 +201,28 @@ def protected():
 @jwt_required() # Protege esta ruta con JWT
 def get_event_history():
     try:
-        # Puedes filtrar por usuario actual (get_jwt_identity()) si los eventos están asociados a usuarios
-        # Por ahora, traeremos todos los eventos (o los más recientes)
-        events_ref = db.collection('events').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100) # Últimos 100 eventos
+        current_user_email = get_jwt_identity() # Obtiene el email del usuario del JWT
+
+        # 1. Obtener la lista de dispositivos asociados a este usuario
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            return {"msg": "Usuario no encontrado en la base de datos."}, 404
+
+        user_data = user_doc.to_dict()
+        user_devices = user_data.get('devices', []) # Obtiene la lista de dispositivos del usuario
+
+        if not user_devices:
+            return {"events": []}, 200 # Si el usuario no tiene dispositivos, devuelve lista vacía
+
+        # 2. Consultar eventos filtrando por los device_ids del usuario
+
+        events_ref = db.collection('events') \
+                      .where('device_id', 'in', user_devices) \
+                      .order_by('timestamp', direction=firestore.Query.DESCENDING) \
+                      .limit(100) # Últimos 100 eventos de los dispositivos del usuario
+
         events = []
         for doc in events_ref.stream():
             event_data = doc.to_dict()
