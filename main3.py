@@ -235,6 +235,40 @@ def get_event_history():
         app.logger.error(f"Error al obtener historial de eventos: {e}")
         return {"msg": f"Error interno del servidor: {str(e)}"}, 500
 
+# ------------------------ API PARA GESTIÓN DE TOKEN FCM --------------------
+
+@app.route("/api/fcm_token", methods=["POST"])
+@jwt_required() # Asegura que solo usuarios autenticados puedan registrar tokens
+def update_fcm_token():
+    try:
+        current_user_email = get_jwt_identity() # Obtiene el email del usuario del JWT
+        data = request.json
+        fcm_token = data.get("fcm_token", None)
+
+        if not fcm_token:
+            return {"msg": "Falta el token FCM."}, 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            return {"msg": "Usuario no encontrado."}, 404
+
+        user_data = user_doc.to_dict()
+        current_tokens = user_data.get('fcm_tokens', [])
+
+        # Si el token ya existe, no lo añadimos de nuevo para evitar duplicados
+        if fcm_token not in current_tokens:
+            current_tokens.append(fcm_token)
+            user_doc_ref.update({'fcm_tokens': current_tokens})
+            return {"msg": "Token FCM registrado/actualizado correctamente."}, 200
+        else:
+            return {"msg": "Token FCM ya existente para este usuario."}, 200 # O 204 No Content
+    except Exception as e:
+        app.logger.error(f"Error al actualizar token FCM: {e}")
+        return {"msg": f"Error interno del servidor: {str(e)}"}, 500
+# ------------------------ FIN API PARA GESTIÓN DE TOKEN FCM ----------------
+
 # ----------- API PARA LAS CÁMARAS (NO TOCAR) -------------
 @app.route('/upload', methods=['POST'])
 def upload_image():
