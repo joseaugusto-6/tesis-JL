@@ -17,7 +17,7 @@ from firebase_admin import firestore # Para acceder a Firestore
 
 # ========== CONFIGURACIÓN FIREBASE ==========
 SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
-BUCKET_NAME = 'security-cam-f322b.firebasestorage.app' # Bucket de Firebase Storage
+#BUCKET_NAME = 'security-cam-f322b.firebasestorage.app' # Bucket de Firebase Storage
 
 # Carpeta de imágenes a procesar y de embeddings EN FIREBASE
 FIREBASE_PATH_FOTOS = 'uploads/'             # Fotos subidas por la cámara (ej. uploads/camera1/imagen.jpg)
@@ -43,7 +43,7 @@ cooldown_seconds = 30 # segundos (cooldown para alertas IFTTT/FCM del mismo even
 # ========== INICIALIZACIÓN FIREBASE ==========
 cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
 firebase_admin.initialize_app(cred, {
-    'storageBucket': BUCKET_NAME,
+    'storageBucket': 'security-cam-f322b.appspot.com',
 })
 bucket = storage.bucket()
 db = firestore.client() # Inicializa el cliente de Firestore
