@@ -3,6 +3,7 @@ from flask import Flask, request, render_template, redirect, url_for, session, f
 from google.cloud import storage, firestore
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 
 # Inicializaciones básicas
 app = Flask(__name__)
