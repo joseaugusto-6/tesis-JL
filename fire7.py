@@ -17,10 +17,13 @@ from firebase_admin import firestore # Para acceder a Firestore
 
 # ========== CONFIGURACIÓN FIREBASE ==========
 SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
-BUCKET_NAME = 'security-cam-f322b.firebasestorage.app' # Bucket de Firebase Storage
+# BUCKET_NAME para inicializar firebase_admin.initialize_app (usa .appspot.com)
+FIREBASE_INIT_BUCKET_NAME = 'security-cam-f322b.appspot.com' 
+# BUCKET_NAME para acceso de storage (usa .firebasestorage.app)
+FIREBASE_STORAGE_BUCKET_DOMAIN = 'security-cam-f322b.firebasestorage.app'
 
 # Carpeta de imágenes a procesar y de embeddings EN FIREBASE
-FIREBASE_PATH_FOTOS = 'uploads/'             # Fotos subidas por la cámara (ej. uploads/camera1/imagen.jpg)
+FIREBASE_PATH_FOTOS = 'uploads/'             # Fotos subidas por la cámara (ej. uploads/camera001/imagen.jpg)
 FIREBASE_PATH_EMBEDDINGS = 'embeddings_clientes/' # Embeddings de cada cliente (ej. embeddings_clientes/email@example.com/nombre.npy)
 FIREBASE_PATH_ALARMAS = 'alarmas_procesadas/' # Carpeta en firebase donde subir imágenes de alarmas/eventos procesados
 
@@ -43,9 +46,11 @@ cooldown_seconds = 30 # segundos (cooldown para alertas IFTTT/FCM del mismo even
 # ========== INICIALIZACIÓN FIREBASE ==========
 cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
 firebase_admin.initialize_app(cred, {
-    'storageBucket': BUCKET_NAME,
+    'credential': cred, # Asegurarse de que las credenciales se pasan así también
+    'projectId': 'security-cam-f322b', # Tu ID de proyecto Firebase (confirmado en depuración)
+    'storageBucket': FIREBASE_INIT_BUCKET_NAME, # Usa el nombre .appspot.com para la inicialización
 })
-bucket = storage.bucket()
+bucket = storage.bucket() # Este bucket es el que usa FIREBASE_INIT_BUCKET_NAME por defecto
 db = firestore.client() # Inicializa el cliente de Firestore
 
 # ========== INICIALIZAR MODELOS ==========
@@ -57,7 +62,6 @@ try:
     class_names = model.names
 except Exception as e:
     print(f"Error al cargar modelo YOLOv5: {e}. Asegúrate de tener PyTorch y YOLOv5 configurados.")
-    # Si YOLOv5 no carga, puedes salir o manejarlo para que siga sin detección de objetos
     model = None
     class_names = []
 
@@ -261,23 +265,29 @@ def procesar_imagenes():
         for img_dict in imagenes:
             local_path = img_dict['local_path']
             blob = img_dict['blob']
-            nombre_archivo = img_dict['nombre'] # Ej: cam01_20250704_130000.jpg
+            nombre_archivo = img_dict['nombre'] # Ej: camera001_20250704_130000.jpg
 
-            # Extraer device_id del nombre del archivo (ej. "cam01")
+            # Extraer device_id del nombre del archivo (ej. "camera001")
             device_id = nombre_archivo.split('_')[0] if '_' in nombre_archivo else 'unknown'
-            
+            print(f"[DEBUG] Device ID extraído: {device_id}") # DEBUG para verificar
+
             # Obtener el email del usuario propietario del dispositivo
             owner_email = get_user_email_by_device_id(device_id)
             if not owner_email:
-                print(f"[INFO] Dispositivo {device_id} no asociado a ningún usuario. No se enviarán notificaciones.")
-                # Si la imagen no está asociada a un usuario, borra el blob para que no se re-procese
-                blob.delete()
+                print(f"[INFO] Dispositivo {device_id} no asociado a ningún usuario. No se enviarán notificaciones ni se guardará historial.")
+                try:
+                    blob.delete() # Eliminar el blob de Firebase Storage si no se puede asociar
+                except Exception as e:
+                    print(f"Error al eliminar blob {blob.name} sin usuario asociado: {e}")
                 continue
 
             img = cv2.imread(local_path)
             if img is None:
                 print(f"[ERROR] No se pudo cargar la imagen {local_path}.")
-                blob.delete() # Eliminar el blob de Firebase Storage si no se puede cargar
+                try:
+                    blob.delete() # Eliminar el blob de Firebase Storage si no se puede cargar
+                except Exception as e:
+                    print(f"Error al eliminar blob {blob.name} al no cargar imagen: {e}")
                 continue
 
             img_result = img.copy() # Imagen para dibujar resultados
@@ -387,6 +397,7 @@ def procesar_imagenes():
                 # --- Notificación y Registro de Eventos (Persona Desconocida - Alarma) ---
                 if len(rostros_desconocidos_validados) > 0:
                     # Lógica de detección de alarmas por personas desconocidas (si se requiere DETECCIONES_REQUERIDAS)
+                    is_new_unknown_alarm = True # Para enviar notif y evento al menos una vez por rostro desconocido
                     for rostro_data in rostros_desconocidos_validados:
                         emb = rostro_data['embedding']
                         match_found_in_history = False
@@ -396,6 +407,7 @@ def procesar_imagenes():
                                 item['contador'] += 1
                                 item['ultima_vista'] = current_utc_time
                                 match_found_in_history = True
+                                is_new_unknown_alarm = False # Si ya está en historial, no es nueva alarma única.
                                 if item['contador'] >= DETECCIONES_REQUERIDAS and \
                                    (current_utc_time - item.get('ultima_alarma', datetime.min.replace(tzinfo=timezone.utc))).total_seconds() > cooldown_seconds:
                                     
@@ -414,7 +426,7 @@ def procesar_imagenes():
                                     enviar_evento_a_main3({ # Registrar evento en historial de app
                                         "person_name": "Desconocido (Recurrente)",
                                         "timestamp": current_utc_time.isoformat(),
-                                        "event_type": "unknown_person",
+                                        "event_type": "unknown_person", # O un tipo más específico si lo agregamos
                                         "image_url": image_public_url,
                                         "event_details": f"Rostro desconocido recurrente en {device_id}. Detecciones: {item['contador']}.",
                                         "device_id": device_id
@@ -429,8 +441,8 @@ def procesar_imagenes():
                                 'ultima_vista': current_utc_time
                             })
                     
-                    # Alerta de rostro desconocido, incluso si no es recurrente todavía (primera detección)
-                    if not rostros_desconocidos_validados: # Si no había ninguno, pero se detectó uno
+                    # Alerta de rostro desconocido (primera detección de un nuevo desconocido)
+                    if is_new_unknown_alarm: # Si no fue una recurrente, es una primera detección
                          alerta_url = enviar_alerta_ifttt(output_local_path, "send_alarm",
                                                           "Rostro desconocido detectado",
                                                           image_public_url,
