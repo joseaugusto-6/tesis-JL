@@ -3,6 +3,7 @@ import time
 import requests
 import firebase_admin
 from firebase_admin import credentials, firestore
+from datetime import datetime, timezone # <-- ¡Añade esta línea!
 
 # ========== CONFIGURACIÓN ==========
 SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
