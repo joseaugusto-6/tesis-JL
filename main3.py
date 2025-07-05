@@ -570,7 +570,7 @@ def live_stream_web_page():
 
 # ------------------------ API PARA SERVIR EL ÚLTIMO FRAME (para polling) ------------------------
 @app.route('/api/latest_frame', methods=['GET'])
-@jwt_required() # Proteger el acceso a la última imagen
+#@jwt_required() # Proteger el acceso a la última imagen
 def latest_frame():
     # Obtener el camera_id del request arguments
     camera_id = request.args.get('camera_id')
