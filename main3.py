@@ -1,6 +1,7 @@
 import os
 from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify, Response
 from google.cloud import storage, firestore
+import paho.mqtt.client as mqtt # <-- ¡Añade esto para MQTT!
 from datetime import datetime, timedelta, timezone 
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
@@ -47,11 +48,35 @@ last_frame_received_time = time.time() # Inicializa con tiempo actual
 STATIC_NO_STREAM_IMAGE_BASE64 = b'/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAD/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwAAARECEQD/AJAAAAAAAAA//9k='
 STATIC_NO_STREAM_IMAGE_BYTES = base64.b64decode(STATIC_NO_STREAM_IMAGE_BASE64) # Decodifica a bytes
 
+# ========== CONFIGURACIÓN MQTT PARA FLASK ==========
+MQTT_BROKER_IP_INTERNAL = "127.0.0.1" # El broker está en la misma VM
+MQTT_BROKER_PORT_INTERNAL = 1883
+MQTT_CLIENT_ID_FLASK = "flask_control_client" # ID único para el cliente MQTT de Flask
+MQTT_QOS_INTERNAL = 1
 
 # Inicializa el cliente de Storage y Firestore
 storage_client = storage.Client()
 bucket = storage_client.get_bucket(BUCKET_NAME) 
 db = firestore.Client()
+
+# Inicializar cliente MQTT para Flask
+flask_mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID_FLASK, clean_session=True)
+
+def on_mqtt_connect_flask(client, userdata, flags, rc):
+    if rc == 0:
+        print(f"MQTT (Flask): Conectado al broker {MQTT_BROKER_IP_INTERNAL}:{MQTT_BROKER_PORT_INTERNAL}")
+    else:
+        print(f"MQTT (Flask): Falló la conexión, código de retorno {rc}\n")
+
+flask_mqtt_client.on_connect = on_mqtt_connect_flask
+# No necesitamos on_message para Flask si solo va a publicar
+
+try:
+    flask_mqtt_client.connect(MQTT_BROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
+    flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado para Flask
+    print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar.")
+except Exception as e:
+    print(f"MQTT (Flask): Error al conectar el cliente MQTT: {e}")
 
 # Define la zona horaria de Caracas (o la que te sea relevante)
 CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # GMT-4 (ejemplo, ajusta si es diferente)
@@ -599,6 +624,41 @@ def live_feed():
     return jsonify({"message": "Use /api/latest_frame with camera_id and session_token for polling stream."}), 200 # <-- Mensaje actualizado
 
 # ------------------------ FIN API PARA RE-TRANSMITIR STREAM A LA APP (via Polling) --------------------
+
+# ------------------------ API PARA CONTROLAR LA CÁMARA REMOTAMENTE --------------------------
+@app.route('/api/camera_control', methods=['POST'])
+@jwt_required()
+def camera_control():
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        camera_id = data.get('camera_id', None)
+        mode = data.get('mode', None) # 'MODE_STREAM' o 'MODE_CAPTURE'
+
+        if not camera_id or not mode:
+            return jsonify({"msg": "Faltan camera_id o modo."}), 400
+
+        # TODO: Autenticación adicional - Verificar si current_user_email está autorizado para esta camera_id
+        # Puedes consultar la colección 'usuarios' para ver si user_email.devices contiene camera_id
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+        if not user_doc.exists or camera_id not in user_doc.to_dict().get('devices', []):
+            return jsonify({"msg": "Usuario no autorizado para esta cámara o cámara no encontrada."}), 403 # Forbidden
+
+        # Publicar el comando MQTT
+        mqtt_topic = f"camera/commands/{camera_id}"
+        mqtt_payload = mode # El comando será MODE_STREAM o MODE_CAPTURE
+
+        flask_mqtt_client.publish(mqtt_topic, payload=mqtt_payload, qos=MQTT_QOS_INTERNAL, retain=False)
+        print(f"MQTT (Flask): Comando '{mqtt_payload}' publicado a '{mqtt_topic}' por {current_user_email}.")
+
+        return jsonify({"msg": f"Comando '{mode}' enviado a la cámara {camera_id}."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error en camera_control: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
+# ------------------------ FIN API PARA CONTROLAR LA CÁMARA --------------------------
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
