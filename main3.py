@@ -489,7 +489,7 @@ def stream_upload():
             return jsonify({"error": "Missing camera_id in form data."}), 400
 
         # Guardar el último frame para la camera_id específica en el diccionario
-        with frame_lock:
+        with frames_lock:
             latest_frames[camera_id] = {"frame": frame_data, "timestamp": datetime.now()}
             # Actualizar el estado general del stream si es el primer frame o si vuelve a estar activo
             if not is_streaming_active:
@@ -577,7 +577,7 @@ def latest_frame():
     if not camera_id:
         return Response(b'{"error": "Missing camera_id parameter."}', mimetype='application/json', status=400) # Devolver JSON de error
 
-    with frame_lock:
+    with frames_lock:
         frame_data_for_camera = latest_frames.get(camera_id) # Obtener frame específico para esta camera_id
 
     # Verificar si el frame es reciente (no más de 15 segundos, por ejemplo)
