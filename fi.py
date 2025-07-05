@@ -334,12 +334,15 @@ def procesar_imagenes():
             # --- Lógica de Eventos y Notificaciones ---
             
             if len(conocidos_en_imagen) > 0 or len(rostros_desconocidos_validados) > 0 or len(personas_detectadas_bboxes) > 0:
+                # La definición de output_filename y la subida de la imagen van AQUÍ:
+                output_filename = f"{nombre_archivo.split('.')[0]}_processed.jpg" # <-- ¡ESTA LÍNEA DEBE ESTAR AQUÍ!
+
                 # Convertir la imagen procesada a bytes para subirla directamente
                 _, img_encoded = cv2.imencode('.jpg', img_result)
                 img_bytes = img_encoded.tobytes()
 
                 blob_processed = bucket.blob(FIREBASE_PATH_ALARMAS + output_filename)
-                blob_processed.upload_from_string(img_bytes, content_type='image/jpeg') # <-- Subida desde bytes
+                blob_processed.upload_from_string(img_bytes, content_type='image/jpeg') 
                 blob_processed.make_public() 
                 image_public_url = blob_processed.public_url
                 print(f"[INFO] Imagen procesada subida a: {image_public_url}")
