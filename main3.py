@@ -19,7 +19,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "security-cam-f322b-8adcddbcb279.
 BUCKET_NAME = "security-cam-f322b.firebasestorage.app"
 
 # URL de tu Google Cloud Function para enviar FCM
-CLOUD_FUNCTION_FCM_URL = "https://sendfcmnotification-614861377558.us-central1.run.app" # <-- ¡PEGA AQUI LA URL REAL DE TU GCF! (Aunque ya no la usaremos para FCM)
+CLOUD_FUNCTION_FCM_URL = "https://sendfcmnotification-614861377558.us-central1.run.app" # <-- ¡PEGA AQUI LA URL REAL DE TU GCF!
 
 # Inicializa el cliente de Storage y Firestore
 storage_client = storage.Client()
@@ -281,8 +281,95 @@ def get_event_history():
             events.append(event_data)
         
         return jsonify({"events": events}), 200
+    except Exception as e:
+        app.logger.error(f"Error al obtener historial de eventos: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
+# Nuevo endpoint para obtener datos del dashboard
+@app.route('/api/dashboard_data', methods=['GET'])
+@jwt_required()
+def get_dashboard_data():
+    current_user_email = get_jwt_identity()
+    
+    user_doc_ref = db.collection('usuarios').document(current_user_email)
+    user_doc = user_doc_ref.get()
+
+    if not user_doc.exists:
+        app.logger.warning(f"get_dashboard_data: User {current_user_email} not found.")
+        return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
+    
+    user_data = user_doc.to_dict()
+    user_devices = user_data.get('devices', [])
+
+    if not user_devices:
+        return jsonify({
+            'latest_events': [],
+            'total_entries_today': 0,
+            'alarms_today': 0
+        }), 200
+
+    latest_events_query = db.collection('events') \
+                          .where('device_id', 'in', user_devices) \
+                          .order_by('timestamp', direction=firestore.Query.DESCENDING) \
+                          .limit(5)
+    
+    events_list = []
+    for event in latest_events_query.stream():
+        event_data = event.to_dict()
+        events_list.append({
+            'id': event.id,
+            'person_name': event_data.get('person_name', 'Desconocido'),
+            'event_type': event_data.get('event_type', 'unknown'),
+            'timestamp': event_data.get('timestamp').isoformat() if isinstance(event_data.get('timestamp'), datetime) else event_data.get('timestamp'),
+            'image_url': event_data.get('image_url', ''),
+            'event_details': event_data.get('event_details', ''),
+            'device_id': event_data.get('device_id', 'unknown')
+        })
+
+    now_caracas = datetime.now(CARACAS_TIMEZONE)
+    today_start = now_caracas.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now_caracas.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    today_events_query = db.collection('events') \
+                          .where('device_id', 'in', user_devices) \
+                          .where('timestamp', '>=', today_start) \
+                          .where('timestamp', '<=', today_end)
+    
+    total_entries_today = 0
+    alarms_today = 0
+
+    for event in today_events_query.stream():
+        event_data = event.to_dict()
+        total_entries_today += 1
+        if event_data.get('event_type') in ['alarm', 'unknown_person', 'unknown_person_repeated_alarm', 'person_no_face_alarm']:
+            alarms_today += 1
+    
+    return jsonify({
+        'latest_events': events_list,
+        'total_entries_today': total_entries_today,
+        'alarms_today': alarms_today
+    }), 200
+
+# Nuevo endpoint para obtener la lista de dispositivos del usuario
+@app.route('/api/user_devices', methods=['GET'])
+@jwt_required()
+def get_user_devices():
+    current_user_email = get_jwt_identity()
+
+    user_doc_ref = db.collection('usuarios').document(current_user_email)
+    user_doc = user_doc_ref.get()
+
+    if not user_doc.exists:
+        app.logger.warning(f"get_user_devices: User {current_user_email} not found.")
+        return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
+    
+    user_data = user_doc.to_dict()
+    devices = user_data.get('devices', []) # Obtiene la lista de dispositivos del usuario
+
+    return jsonify({"devices": devices}), 200
+
 # ------------------------ API PARA LLAMAR GCF Y ENVIAR FCM --------------------
-# Nota: Este endpoint y la GCF ya no son necesarios para FCM, ya que fire.py envía directo.
+# Nota: Este endpoint y la GCF ya no son necesarios para FCM, ya que fi.py envía directo.
 # Se mantiene aquí por si lo necesitabas para otros fines o para documentar el camino.
 @app.route("/api/send_notification_via_gcf", methods=["POST"])
 def send_notification_via_gcf():
@@ -305,6 +392,5 @@ def send_notification_via_gcf():
     except Exception as e:
         app.logger.error(f"Error en send_notification_via_gcf: {e}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-# ------------------------ FIN API PARA LLAMAR GCF Y ENVIAR FCM ---------------
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
