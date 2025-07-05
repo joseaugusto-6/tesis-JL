@@ -391,6 +391,43 @@ def send_notification_via_gcf():
         return jsonify({"error": f"Failed to call Cloud Function: {str(e)}"}), 500
     except Exception as e:
         app.logger.error(f"Error en send_notification_via_gcf: {e}")
+    
+
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+#----------------- API añadir un dispositivo al usuario -----------------------
+@app.route('/api/add_device', methods=['POST'])
+@jwt_required()
+def add_device_to_user():
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        device_id_to_add = data.get('device_id', None)
+
+        if not device_id_to_add:
+            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            app.logger.warning(f"add_device_to_user: User {current_user_email} not found.")
+            return jsonify({"msg": "Usuario no encontrado."}), 404
+
+        user_data = user_doc.to_dict()
+        current_devices = user_data.get('devices', [])
+
+        if device_id_to_add in current_devices:
+            return jsonify({"msg": "El dispositivo ya está asociado a este usuario."}), 409 # Conflict
+
+        current_devices.append(device_id_to_add)
+        user_doc_ref.update({'devices': current_devices})
+
+        return jsonify({"msg": f"Dispositivo {device_id_to_add} añadido correctamente."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al añadir dispositivo: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
