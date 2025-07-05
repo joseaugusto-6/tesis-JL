@@ -305,29 +305,38 @@ def get_event_history():
         app.logger.error(f"Error al obtener historial de eventos: {e}")
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
-# ------------------------ API PARA LLAMAR GCF Y ENVIAR FCM --------------------
-@app.route("/api/send_notification_via_gcf", methods=["POST"])
-# Puedes añadir autenticación aquí si quieres que fire7.py envíe una clave secreta
-def send_notification_via_gcf():
-    try:
-        data = request.json
-        if not all(k in data for k in ['user_email', 'title', 'body']):
-            app.logger.warning(f"send_notification_via_gcf: Missing required fields in request: {data}")
-            return jsonify({"error": "Missing user_email, title, or body in request"}), 400
+# ------------------------ API PARA DATOS DE DASHBOARD --------------------
+@app.route('/api/dashboard_data', methods=['GET'])
+@jwt_required()
+def get_dashboard_data():
+    current_user_email = get_jwt_identity()
 
-        # Llama a la Google Cloud Function
-        gcf_response = requests.post(CLOUD_FUNCTION_FCM_URL, json=data)
-        gcf_response.raise_for_status() # Lanza un error si el status code es 4xx o 5xx
-        
-        # Devuelve la respuesta de la GCF al llamador (fire7.py)
-        return jsonify(gcf_response.json()), gcf_response.status_code
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Error al llamar a la GCF: {e}")
-        return jsonify({"error": f"Failed to call Cloud Function: {str(e)}"}), 500
-    except Exception as e:
-        app.logger.error(f"Error en send_notification_via_gcf: {e}")
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-# ------------------------ FIN API PARA LLAMAR GCF Y ENVIAR FCM ---------------
+    # Obtener eventos del usuario logueado, ordenados por timestamp descendente
+    # y limitados a, por ejemplo, los últimos 5 para el resumen.
+    events_ref = db.collection('eventos').where('user_email', '==', current_user_email).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(5)
+    latest_events = events_ref.stream()
+
+    events_list = []
+    for event in latest_events:
+        event_data = event.to_dict()
+        events_list.append({
+            'id': event.id,
+            'type': event_data.get('type'),
+            'timestamp': event_data.get('timestamp').isoformat(), # Convertir a string ISO 8601
+            'image_url': event_data.get('image_url'),
+            'details': event_data.get('details', {})
+        })
+
+    # Opcional: Calcular estadísticas (ej. eventos hoy, alarmas hoy)
+    # Para esto necesitaríamos una consulta más compleja, por ahora solo los últimos eventos.
+    # Si quieres añadir estadísticas, podemos hacerlo en un paso posterior.
+
+    return jsonify({
+        'latest_events': events_list,
+        'total_entries_today': 0, # Placeholder, se implementará después si es necesario
+        'alarms_today': 0 # Placeholder, se implementará después si es necesario
+    }), 200
+
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
