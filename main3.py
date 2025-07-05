@@ -429,5 +429,39 @@ def add_device_to_user():
         app.logger.error(f"Error al añadir dispositivo: {e}")
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
+# ------------------------ API ELIMINAR DISPOSITIVO --------------------------
+@app.route('/api/remove_device', methods=['POST']) # O DELETE, pero POST es más fácil con body
+@jwt_required()
+def remove_device_from_user():
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        device_id_to_remove = data.get('device_id', None)
+
+        if not device_id_to_remove:
+            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            app.logger.warning(f"remove_device_from_user: User {current_user_email} not found.")
+            return jsonify({"msg": "Usuario no encontrado."}), 404
+
+        user_data = user_doc.to_dict()
+        current_devices = user_data.get('devices', [])
+
+        if device_id_to_remove not in current_devices:
+            return jsonify({"msg": "El dispositivo no está asociado a este usuario."}), 404 # Not Found
+
+        current_devices.remove(device_id_to_remove) # Elimina el dispositivo de la lista
+        user_doc_ref.update({'devices': current_devices})
+
+        return jsonify({"msg": f"Dispositivo {device_id_to_remove} eliminado correctamente."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al eliminar dispositivo: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
