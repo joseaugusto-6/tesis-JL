@@ -38,6 +38,11 @@ frames_lock = threading.Lock()
 stream_sessions = {}
 sessions_lock = threading.Lock()
 
+# Diccionario global para almacenar el estado actual de cada cámara
+# Formato: { "camera_id": {"mode": "STREAMING_MODE", "timestamp": <datetime>} }
+camera_status = {}
+camera_status_lock = threading.Lock()
+
 # Flag para indicar si hay un stream activo (si se están recibiendo frames de la cámara fuente)
 is_streaming_active = False
 # Timestamp del último frame recibido (para detectar inactividad de la cámara fuente)
@@ -65,21 +70,34 @@ flask_mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID_FLASK, clean_session=Tr
 def on_mqtt_connect_flask(client, userdata, flags, rc):
     if rc == 0:
         print(f"MQTT (Flask): Conectado al broker {MQTT_BROKER_IP_INTERNAL}:{MQTT_BROKER_PORT_INTERNAL}")
+        # Suscribirse al tópico de estado de la cámara al conectar
+        client.subscribe("camera/status/#", MQTT_QOS_INTERNAL) # Suscribirse a todos los tópicos de estado
+        print(f"MQTT (Flask): Suscrito a tópicos de estado: camera/status/#")
     else:
         print(f"MQTT (Flask): Falló la conexión, código de retorno {rc}\n")
 
+def on_mqtt_message_flask(client, userdata, msg):
+    global camera_status # Acceder a la variable global
+    topic = msg.topic
+    payload = msg.payload.decode("utf-8")
+    print(f"MQTT (Flask): Mensaje recibido en '{topic}': {payload}")
+
+    if topic.startswith("camera/status/"):
+        camera_id = topic.split('/')[-1]
+        mode_status = payload.replace("Modo: ", "") # Extraer el modo
+        with camera_status_lock:
+            camera_status[camera_id] = {"mode": mode_status, "timestamp": datetime.now()}
+        print(f"MQTT (Flask): Estado de {camera_id} actualizado a {mode_status}")
+
 flask_mqtt_client.on_connect = on_mqtt_connect_flask
-# No necesitamos on_message para Flask si solo va a publicar
+flask_mqtt_client.on_message = on_mqtt_message_flask # Añade la función on_message
 
 try:
-    flask_mqtt_client.connect(MQTT_BROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
-    flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado para Flask
-    print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar.")
+    flask_mqtt_client.connect(MQTT_BROROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
+    flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado
+    print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar/suscribir.")
 except Exception as e:
     print(f"MQTT (Flask): Error al conectar el cliente MQTT: {e}")
-
-# Define la zona horaria de Caracas (o la que te sea relevante)
-CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # GMT-4 (ejemplo, ajusta si es diferente)
 
 # ---------------------- FIRESTORE USUARIOS --------------------------
 def firestore_user_exists(email):
@@ -659,6 +677,38 @@ def camera_control():
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
 # ------------------------ FIN API PARA CONTROLAR LA CÁMARA --------------------------
+
+# ------------------------ API PARA OBTENER EL ESTADO DE LA CÁMARA --------------------------
+@app.route('/api/camera_status/<string:camera_id>', methods=['GET'])
+@jwt_required()
+def get_camera_status(camera_id):
+    try:
+        current_user_email = get_jwt_identity()
+
+        # Autenticación: Verificar si el usuario está autorizado para esta camera_id
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+        if not user_doc.exists or camera_id not in user_doc.to_dict().get('devices', []):
+            return jsonify({"msg": "Usuario no autorizado para esta cámara o cámara no encontrada."}), 403
+
+        with camera_status_lock:
+            status_info = camera_status.get(camera_id)
+
+        if status_info:
+            # Incluir un timestamp para que la app sepa cuán reciente es el estado
+            return jsonify({
+                "camera_id": camera_id,
+                "mode": status_info["mode"],
+                "timestamp": status_info["timestamp"].isoformat()
+            }), 200
+        else:
+            return jsonify({"msg": "Estado de cámara no disponible o no reportado.", "mode": "UNKNOWN"}), 404
+
+    except Exception as e:
+        app.logger.error(f"Error al obtener estado de cámara: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
+# ------------------------ FIN API PARA OBTENER EL ESTADO DE LA CÁMARA --------------------
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
