@@ -472,10 +472,12 @@ def live_feed():
             with frame_lock:
                 if not latest_frame_buffer.empty():
                     frame = latest_frame_buffer.get()
+                    last_frame_received_time = time.time()
                 else:
                     frame = None # No hay frame nuevo, esperar
             
             if frame:
+                print(f"DEBUG_STREAM: Yielding frame of size {len(frame)} bytes.") # DEBUG: ver el tamaño del frame que se envia
                 # Incluir Content-Length para mayor robustez en el stream MJPEG
                 # Formato: --<boundary>\r\nContent-Type: image/jpeg\r\nContent-Length: <length>\r\n\r\n[JPEG DATA]\r\n
                 yield (
@@ -484,9 +486,10 @@ def live_feed():
                     b'Content-Length: ' + str(len(frame)).encode() + b'\r\n' + # Longitud del frame JPEG
                     b'\r\n' + frame + b'\r\n' # Doble \r\n después de headers, simple \r\n después del frame
                 )
-                # print("DEBUG: Frame enviado a WebView.") # Descomentar si quieres ver este log
+                print("DEBUG: Frame enviado a WebView.") # Descomentar si quieres ver este log
 
             else:
+                print("DEBUG_STREAM: No frame in buffer, waiting.") # DEBUG: si no hay frame disponible
                 time.sleep(0.01) # Pausa más corta si no hay frame nuevo, para reintentar más rápido.
         
         # Este código después del while True normalmente no se ejecuta en un stream infinito
