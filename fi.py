@@ -341,6 +341,7 @@ def procesar_imagenes():
                 _, img_encoded = cv2.imencode('.jpg', img_result)
                 img_bytes = img_encoded.tobytes()
 
+
                 blob_processed = bucket.blob(FIREBASE_PATH_ALARMAS + output_filename)
                 blob_processed.upload_from_string(img_bytes, content_type='image/jpeg') 
                 blob_processed.make_public() 
