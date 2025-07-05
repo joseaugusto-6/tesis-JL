@@ -93,7 +93,7 @@ flask_mqtt_client.on_connect = on_mqtt_connect_flask
 flask_mqtt_client.on_message = on_mqtt_message_flask # Añade la función on_message
 
 try:
-    flask_mqtt_client.connect(MQTT_BROROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
+    flask_mqtt_client.connect(MQTT_BROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
     flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado
     print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar/suscribir.")
 except Exception as e:
