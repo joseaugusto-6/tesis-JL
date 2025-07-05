@@ -25,13 +25,12 @@ BUCKET_NAME = "security-cam-f322b.firebasestorage.app"
 
 # URL de tu Google Cloud Function para enviar FCM
 CLOUD_FUNCTION_FCM_URL = "https://sendfcmnotification-614861377558.us-central1.run.app" # <-- ¡PEGA AQUI LA URL REAL DE TU GCF!
-# ... (URL de tu Google Cloud Function) ...
 
 # ========== CONFIGURACIÓN PARA STREAM DE VIDEO (Polling de Imágenes) ==========
 # Diccionario global para almacenar el último frame de cada cámara
 # Formato: { "camera_id": {"frame": <bytes>, "timestamp": <datetime>} }
 latest_frames = {}
-frames_lock = threading.Lock() # <-- ¡Esta es la que da error si no está!
+frames_lock = threading.Lock()
 
 # Diccionario global para almacenar tokens de sesión de stream activos
 # Formato: { "session_token": {"user_id": <id>, "camera_id": <id>, "expires": <datetime>} }
@@ -39,15 +38,15 @@ stream_sessions = {}
 sessions_lock = threading.Lock()
 
 # Flag para indicar si hay un stream activo (si se están recibiendo frames de la cámara fuente)
-is_streaming_active = False # <-- ¡Esta es la que da error si no está!
-
+is_streaming_active = False
 # Timestamp del último frame recibido (para detectar inactividad de la cámara fuente)
-last_frame_received_time = time.time() # <-- ¡Esta es la que da error si no está!
+last_frame_received_time = time.time() # Inicializa con tiempo actual
 
 # Imagen estática de "Stream No Disponible" (bytes JPEG codificados en base64)
 # Esta es una imagen de 1x1 pixel negro.
 STATIC_NO_STREAM_IMAGE_BASE64 = b'/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAD/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwAAARECEQD/AJAAAAAAAAA//9k='
-STATIC_NO_STREAM_IMAGE_BYTES = base64.b64decode(STATIC_NO_STREAM_IMAGE_BASE64) # Decodifica a bytes.
+STATIC_NO_STREAM_IMAGE_BYTES = base64.b64decode(STATIC_NO_STREAM_IMAGE_BASE64) # Decodifica a bytes
+
 
 # Inicializa el cliente de Storage y Firestore
 storage_client = storage.Client()
@@ -490,7 +489,7 @@ def stream_upload():
             return jsonify({"error": "Missing camera_id in form data."}), 400
 
         # Guardar el último frame para la camera_id específica en el diccionario
-        with frames_lock:
+        with frame_lock:
             latest_frames[camera_id] = {"frame": frame_data, "timestamp": datetime.now()}
             # Actualizar el estado general del stream si es el primer frame o si vuelve a estar activo
             if not is_streaming_active:
@@ -568,6 +567,17 @@ def live_stream_web_page():
     # Pasa los parámetros a la plantilla HTML
     return render_template('live_stream_page.html', camera_id=camera_id, session_token=session_token)
 # ------------------------ FIN RUTA WEB PARA EL STREAM ---------------------------
+
+# ------------------------ API PARA RE-TRANSMITIR STREAM A LA APP (via Polling) ------------------------
+# Este endpoint es el que la página web llamará para obtener la última imagen.
+# Ya no es /api/live_feed, es /api/latest_frame
+# Mantenemos /api/live_feed para el mensaje de debug si se accede incorrectamente.
+@app.route('/api/live_feed', methods=['GET'])
+@jwt_required() # Protegido, pero ahora solo para verificar si la cámara está "viva" si se accede directamente.
+def live_feed():
+    return jsonify({"message": "Use /api/latest_frame with camera_id and session_token for polling stream."}), 200 # <-- Mensaje actualizado
+
+# ------------------------ FIN API PARA RE-TRANSMITIR STREAM A LA APP (via Polling) --------------------
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
