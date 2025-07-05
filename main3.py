@@ -478,162 +478,6 @@ def stream_upload():
 
         if not frame_data:
             return jsonify({"error": "Frame de video vacío."}), 400
-
-        # Guardar el último frame en el buffer
-        with frame_lock:
-            if not latest_frame_buffer.empty():
-                latest_frame_buffer.get_nowait() # Vaciar el buffer si no está vacío
-            latest_frame_buffer.put(frame_data)
-            is_streaming_active = True # Hay frames llegando, el stream está activo
-            last_frame_received_time = time.time() # Actualiza el tiempo aquí
-        
-        return jsonify({"message": "Frame recibido."}), 200
-    except Exception as e:
-        app.logger.error(f"Error al recibir frame de stream: {e}")
-        is_streaming_active = False # Si hay un error, el stream podría haberse detenido
-        return jsonify({"error": str(e)}), 500
-
-# ------------------------ FIN API PARA RECIBIR STREAM DE PC ---------------------------
-
-# ------------------------ API PARA RE-TRANSMITIR STREAM A LA APP (via Polling) ------------------------
-@app.route('/api/live_feed', methods=['GET'])
-@jwt_required() # Proteger el stream para usuarios logueados
-def live_feed():
-    # Este endpoint ya no es el que sirve el stream MJPEG continuo a WebView.
-    # Ahora es para la página web que hará polling de /api/latest_frame
-    # Mantener @jwt_required() porque la app Flutter usará este endpoint para validar si la cámara está "viva"
-
-    # La lógica de generación MJPEG se ha movido/cambiado a /api/latest_frame
-    # Este endpoint podría ahora simplemente devolver un estado de "stream activo"
-    # o si se accediera desde una página web, simplemente redirigir al /latest_frame
-    return jsonify({"message": "Use /api/latest_frame for polling stream."}), 200 # <-- Retorno de ejemplo si se accede aquí
-
-# ------------------------ API PARA SERVIR EL ÚLTIMO FRAME (para polling) ------------------------
-@app.route('/api/latest_frame', methods=['GET'])
-@jwt_required() # Proteger el acceso a la última imagen
-def latest_frame():
-    # Obtener el camera_id del request arguments
-    camera_id = request.args.get('camera_id')
-    if not camera_id:
-        return Response(b'{"error": "Missing camera_id parameter."}', mimetype='application/json', status=400) # Devolver JSON de error
-
-    with frame_lock:
-        frame_data_for_camera = latest_frames.get(camera_id) # Obtener frame específico para esta camera_id
-
-    # Verificar si el frame es reciente (no más de 15 segundos, por ejemplo)
-    if frame_data_for_camera and (time.time() - frame_data_for_camera['timestamp'].timestamp()) < 15: # Usar .timestamp() para comparar con time.time()
-        return Response(frame_data_for_camera['frame'], mimetype='image/jpeg')
-    else:
-        # Si no hay frames recientes para esa cámara, o la cámara no existe, devolver la imagen estática
-        return Response(STATIC_NO_STREAM_IMAGE_BYTES, mimetype='image/jpeg')
-
-# ------------------------ FIN API PARA SERVIR EL ÚLTIMO FRAME --------------------
-
-# Nuevo endpoint para obtener la lista de dispositivos del usuario
-@app.route('/api/user_devices', methods=['GET'])
-@jwt_required()
-def get_user_devices():
-    current_user_email = get_jwt_identity()
-
-    user_doc_ref = db.collection('usuarios').document(current_user_email)
-    user_doc = user_doc_ref.get()
-
-    if not user_doc.exists:
-        app.logger.warning(f"get_user_devices: User {current_user_email} not found.")
-        return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
-    
-    user_data = user_doc.to_dict()
-    devices = user_data.get('devices', []) # Obtiene la lista de dispositivos del usuario
-
-    return jsonify({"devices": devices}), 200
-
-# ------------------------ API AÑADIR NUEVO DISPOSITIVO -----------------------
-@app.route('/api/add_device', methods=['POST'])
-@jwt_required()
-def add_device_to_user():
-    try:
-        current_user_email = get_jwt_identity()
-        data = request.json
-        device_id_to_add = data.get('device_id', None)
-
-        if not device_id_to_add:
-            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
-
-        user_doc_ref = db.collection('usuarios').document(current_user_email)
-        user_doc = user_doc_ref.get()
-
-        if not user_doc.exists:
-            app.logger.warning(f"add_device_to_user: User {current_user_email} not found.")
-            return jsonify({"msg": "Usuario no encontrado."}), 404
-        
-        user_data = user_doc.to_dict()
-        current_devices = user_data.get('devices', [])
-
-        if device_id_to_add in current_devices:
-            return jsonify({"msg": "El dispositivo ya está asociado a este usuario."}), 409 # Conflict
-        
-        current_devices.append(device_id_to_add)
-        user_doc_ref.update({'devices': current_devices})
-
-        return jsonify({"msg": f"Dispositivo {device_id_to_add} añadido correctamente."}), 200
-
-    except Exception as e:
-        app.logger.error(f"Error al añadir dispositivo: {e}")
-        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
-
-# ------------------------ API ELIMINAR DISPOSITIVO --------------------------
-@app.route('/api/remove_device', methods=['POST']) # O DELETE, pero POST es más fácil con body
-@jwt_required()
-def remove_device_from_user():
-    try:
-        current_user_email = get_jwt_identity()
-        data = request.json
-        device_id_to_remove = data.get('device_id', None)
-
-        if not device_id_to_remove:
-            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
-
-        user_doc_ref = db.collection('usuarios').document(current_user_email)
-        user_doc = user_doc_ref.get()
-
-        if not user_doc.exists:
-            app.logger.warning(f"remove_device_from_user: User {current_user_email} not found.")
-            return jsonify({"msg": "Usuario no encontrado."}), 404
-        
-        user_data = user_doc.to_dict()
-        current_devices = user_data.get('devices', [])
-
-        if device_id_to_remove not in current_devices:
-            return jsonify({"msg": "El dispositivo no está asociado a este usuario."}), 404 # Not Found
-        
-        current_devices.remove(device_id_to_remove) # Elimina el dispositivo de la lista
-        user_doc_ref.update({'devices': current_devices})
-
-        return jsonify({"msg": f"Dispositivo {device_id_to_remove} eliminado correctamente."}), 200
-
-    except Exception as e:
-        app.logger.error(f"Error al eliminar dispositivo: {e}")
-        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
-
-# ------------------------ API PARA RECIBIR STREAM DE PC -------------------------------
-@app.route('/api/stream_upload', methods=['POST'])
-def stream_upload():
-    global is_streaming_active, last_frame_received_time # Acceder a la variable global
-    try:
-        # Esperamos que el frame se envíe como un archivo binario o base64 en el cuerpo
-        # Si se envía como 'file' en form-data:
-        if 'frame' not in request.files:
-            # O si se envía como raw binary data:
-            if request.data:
-                frame_data = request.data
-            else:
-                return jsonify({"error": "No se recibió frame de video."}), 400
-        else:
-            frame_data = request.files['frame'].read()
-            print("Recibido frame como file") # DEBUG
-
-        if not frame_data:
-            return jsonify({"error": "Frame de video vacío."}), 400
         
         camera_id = request.form.get('camera_id', 'default_camera') # Obtener camera_id del form-data
         if not camera_id:
@@ -664,6 +508,13 @@ def send_notification_via_gcf():
         if not all(k in data for k in ['user_email', 'title', 'body']):
             app.logger.warning(f"send_notification_via_gcf: Missing required fields in request: {data}")
             return jsonify({"error": "Missing user_email, title, or body in request"}), 400
+
+        # Si decides volver a usar GCF para FCM, descomenta esta parte
+        # gcf_response = requests.post(CLOUD_FUNCTION_FCM_URL, json=data)
+        # gcf_response.raise_for_status()
+        # return jsonify(gcf_response.json()), gcf_response.status_code
+        
+        # Por ahora, simplemente devuelve una confirmación simulada si no usas GCF
         return jsonify({"message": "GCF call simulated (FCM handled directly by fi.py now)"}), 200
     except requests.exceptions.RequestException as e:
         app.logger.error(f"Error al llamar a la GCF: {e}")
@@ -671,7 +522,6 @@ def send_notification_via_gcf():
     except Exception as e:
         app.logger.error(f"Error en send_notification_via_gcf: {e}")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-# ------------------------ FIN API PARA LLAMAR GCF Y ENVIAR FCM (SIMULADA AHORA) --------------------
 
 # ------------------------ API PARA OBTENER UN TOKEN DE SESIÓN PARA EL STREAM ------------------------
 @app.route('/api/get_stream_session_token', methods=['POST'])
