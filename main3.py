@@ -1,14 +1,14 @@
 import os
 from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify, Response
 from google.cloud import storage, firestore
-from datetime import datetime, timedelta, timezone # Importa timedelta y timezone
+from datetime import datetime, timedelta, timezone 
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 import requests
 import threading 
 import time 
 import queue 
-import base64  
+import base64 
 
 # Inicializaciones básicas
 app = Flask(__name__)
@@ -30,8 +30,10 @@ CLOUD_FUNCTION_FCM_URL = "https://sendfcmnotification-614861377558.us-central1.r
 latest_frame_buffer = queue.Queue(maxsize=1) # Guarda solo el último frame
 # Candado para proteger el acceso al buffer (aunque Queue ya es thread-safe, buena práctica)
 frame_lock = threading.Lock()
-# Flag para indicar si hay un stream activo
+# Flag para indicar si hay un stream activo (si se están recibiendo frames de la cámara fuente)
 is_streaming_active = False
+# Timestamp del último frame recibido (para detectar inactividad de la cámara fuente)
+last_frame_received_time = time.time() # Inicializa con tiempo actual
 
 # Inicializa el cliente de Storage y Firestore
 storage_client = storage.Client()
@@ -403,82 +405,12 @@ def send_notification_via_gcf():
         return jsonify({"error": f"Failed to call Cloud Function: {str(e)}"}), 500
     except Exception as e:
         app.logger.error(f"Error en send_notification_via_gcf: {e}")
-    
-
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-
-#----------------- API AÑADIR NUEVO DISPOSITIVO -----------------------
-@app.route('/api/add_device', methods=['POST'])
-@jwt_required()
-def add_device_to_user():
-    try:
-        current_user_email = get_jwt_identity()
-        data = request.json
-        device_id_to_add = data.get('device_id', None)
-
-        if not device_id_to_add:
-            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
-
-        user_doc_ref = db.collection('usuarios').document(current_user_email)
-        user_doc = user_doc_ref.get()
-
-        if not user_doc.exists:
-            app.logger.warning(f"add_device_to_user: User {current_user_email} not found.")
-            return jsonify({"msg": "Usuario no encontrado."}), 404
-
-        user_data = user_doc.to_dict()
-        current_devices = user_data.get('devices', [])
-
-        if device_id_to_add in current_devices:
-            return jsonify({"msg": "El dispositivo ya está asociado a este usuario."}), 409 # Conflict
-
-        current_devices.append(device_id_to_add)
-        user_doc_ref.update({'devices': current_devices})
-
-        return jsonify({"msg": f"Dispositivo {device_id_to_add} añadido correctamente."}), 200
-
-    except Exception as e:
-        app.logger.error(f"Error al añadir dispositivo: {e}")
-        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
-
-# ------------------------ API ELIMINAR DISPOSITIVO --------------------------
-@app.route('/api/remove_device', methods=['POST']) # O DELETE, pero POST es más fácil con body
-@jwt_required()
-def remove_device_from_user():
-    try:
-        current_user_email = get_jwt_identity()
-        data = request.json
-        device_id_to_remove = data.get('device_id', None)
-
-        if not device_id_to_remove:
-            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
-
-        user_doc_ref = db.collection('usuarios').document(current_user_email)
-        user_doc = user_doc_ref.get()
-
-        if not user_doc.exists:
-            app.logger.warning(f"remove_device_from_user: User {current_user_email} not found.")
-            return jsonify({"msg": "Usuario no encontrado."}), 404
-
-        user_data = user_doc.to_dict()
-        current_devices = user_data.get('devices', [])
-
-        if device_id_to_remove not in current_devices:
-            return jsonify({"msg": "El dispositivo no está asociado a este usuario."}), 404 # Not Found
-
-        current_devices.remove(device_id_to_remove) # Elimina el dispositivo de la lista
-        user_doc_ref.update({'devices': current_devices})
-
-        return jsonify({"msg": f"Dispositivo {device_id_to_remove} eliminado correctamente."}), 200
-
-    except Exception as e:
-        app.logger.error(f"Error al eliminar dispositivo: {e}")
-        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
 # ------------------------ API PARA RECIBIR STREAM DE PC -------------------------------
 @app.route('/api/stream_upload', methods=['POST'])
 def stream_upload():
-    global is_streaming_active # Acceder a la variable global
+    global is_streaming_active, last_frame_received_time # Acceder a la variable global
     try:
         # Esperamos que el frame se envíe como un archivo binario o base64 en el cuerpo
         # Si se envía como 'file' en form-data:
@@ -502,7 +434,8 @@ def stream_upload():
                 latest_frame_buffer.get_nowait() # Vaciar el buffer si no está vacío
             latest_frame_buffer.put(frame_data)
             is_streaming_active = True # Hay frames llegando, el stream está activo
-
+            last_frame_received_time = time.time() # Actualiza el tiempo aquí
+        
         return jsonify({"message": "Frame recibido."}), 200
     except Exception as e:
         app.logger.error(f"Error al recibir frame de stream: {e}")
@@ -516,38 +449,60 @@ def stream_upload():
 @jwt_required() # Proteger el stream para usuarios logueados
 def live_feed():
     def generate():
-        last_frame_time = time.time()
-        no_frame_timeout = 5 # segundos sin frames para considerar stream inactivo
-        while True:
-            current_time = time.time()
-            # Verificar si el stream de la cámara fuente está activo
-            if not is_streaming_active:
-                # Enviar un frame de "no stream" o esperar
-                if current_time - last_frame_time > no_frame_timeout:
-                    print("Stream: No hay frames de la cámara fuente. Enviando frame de espera.")
-                    # Puedes servir una imagen estática de "Stream no disponible" aquí
-                    # Ejemplo: yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + your_static_image_bytes + b'\r\n\r\n')
-                    time.sleep(1) # Pequeña pausa para no saturar
-                    continue
+        boundary = "frame" # El mismo boundary que en el mimetype
+        
+        no_frame_timeout_seconds = 10 # Aumentar a 10 segundos antes de considerar stream inactivo
+        
+        # Asegurar que el stream está activo al inicio o esperar un momento
+        start_time = time.time()
+        while not is_streaming_active and (time.time() - start_time < no_frame_timeout_seconds):
+            print("Stream: Esperando que la cámara fuente esté activa...")
+            time.sleep(0.5) # Esperar a que los frames empiecen a llegar
 
+        # Si después de esperar, no hay stream activo, o si se detiene
+        while True:
+            # Verificar si el stream de la cámara fuente está inactivo
+            if time.time() - last_frame_received_time > no_frame_timeout_seconds:
+                print(f"Stream: Cámara fuente inactiva por {no_frame_timeout_seconds} segundos. Enviando frame de espera.")
+                # Opcional: enviar una imagen estática de "Stream no disponible" aquí
+                # Ejemplo: yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + your_static_image_bytes + b'\r\n\r\n')
+                time.sleep(1) # Pequeña pausa para no saturar
+                continue
+            
             with frame_lock:
                 if not latest_frame_buffer.empty():
                     frame = latest_frame_buffer.get()
-                    last_frame_time = current_time # Actualizar tiempo del último frame
                 else:
                     frame = None # No hay frame nuevo, esperar
-
+            
             if frame:
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n'  # <-- ¡CORRECCIÓN AQUÍ!
-                       b'Content-Length: ' + str(len(frame)).encode() + b'\r\n' # <-- ¡NUEVA LÍNEA!
-                       b'\r\n' + frame + b'\r\n') # Asegúrate que aquí hay un \r\n y NO dos \r\n\r\n)
+                # Incluir Content-Length para mayor robustez en el stream MJPEG
+                # Formato: --<boundary>\r\nContent-Type: image/jpeg\r\nContent-Length: <length>\r\n\r\n[JPEG DATA]\r\n
+                yield (
+                    b'--%s\r\n' % boundary.encode('utf-8') + # Delimitador
+                    b'Content-Type: image/jpeg\r\n' +
+                    b'Content-Length: ' + str(len(frame)).encode() + b'\r\n' + # Longitud del frame JPEG
+                    b'\r\n' + frame + b'\r\n' # Doble \r\n después de headers, simple \r\n después del frame
+                )
+                # print("DEBUG: Frame enviado a WebView.") # Descomentar si quieres ver este log
+
             else:
-                # Si no hay frames, esperar un poco antes de volver a intentar
-                time.sleep(0.05)
+                time.sleep(0.01) # Pausa más corta si no hay frame nuevo, para reintentar más rápido.
+        
+        # Este código después del while True normalmente no se ejecuta en un stream infinito
+        print("Stream generator finished.")
 
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
+    # Encabezados HTTP para el stream MJPEG
+    headers = {
+        'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+        'Cache-Control': 'no-cache, no-store, max-age=0, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*', # Permitir CORS
+    }
+    # La Response de Flask construye la cabecera HTTP inicial.
+    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame', headers=headers) # <-- Asegúrate de pasar headers aquí
 # ------------------------ FIN API PARA RE-TRANSMITIR STREAM A LA APP --------------------
 
 if __name__ == "__main__":
