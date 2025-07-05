@@ -281,30 +281,5 @@ def get_event_history():
             events.append(event_data)
         
         return jsonify({"events": events}), 200
-# ------------------------ API PARA LLAMAR GCF Y ENVIAR FCM --------------------
-# Nota: Este endpoint y la GCF ya no son necesarios para FCM, ya que fire.py envía directo.
-# Se mantiene aquí por si lo necesitabas para otros fines o para documentar el camino.
-@app.route("/api/send_notification_via_gcf", methods=["POST"])
-def send_notification_via_gcf():
-    try:
-        data = request.json
-        if not all(k in data for k in ['user_email', 'title', 'body']):
-            app.logger.warning(f"send_notification_via_gcf: Missing required fields in request: {data}")
-            return jsonify({"error": "Missing user_email, title, or body in request"}), 400
-
-        # Si decides volver a usar GCF para FCM, descomenta esta parte
-        # gcf_response = requests.post(CLOUD_FUNCTION_FCM_URL, json=data)
-        # gcf_response.raise_for_status()
-        # return jsonify(gcf_response.json()), gcf_response.status_code
-        
-        # Por ahora, simplemente devuelve una confirmación simulada si no usas GCF
-        return jsonify({"message": "GCF call simulated (FCM handled directly by fi.py now)"}), 200
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Error al llamar a la GCF: {e}")
-        return jsonify({"error": f"Failed to call Cloud Function: {str(e)}"}), 500
-    except Exception as e:
-        app.logger.error(f"Error en send_notification_via_gcf: {e}")
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
-# ------------------------ FIN API PARA LLAMAR GCF Y ENVIAR FCM ---------------
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
