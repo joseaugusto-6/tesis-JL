@@ -1,9 +1,9 @@
 import os
-import io # Mantener por si acaso, aunque no se usa directamente en este flujo
+# import io # Eliminado - no usado
 import time
 import cv2
-import numpy as np
-import random # Mantenido por si acaso, aunque obtener_color_aleatorio podría eliminarse si no se usa
+import numpy as np # Necesario para cv2.imencode y numpy.tobytes
+# import random # Eliminado - no usado
 from datetime import datetime, timezone 
 from mtcnn import MTCNN
 from keras_facenet import FaceNet
@@ -18,7 +18,7 @@ from firebase_admin import firestore
 # ========== CONFIGURACIÓN FIREBASE ==========
 SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
 FIREBASE_INIT_BUCKET_NAME = 'security-cam-f322b.firebasestorage.app' 
-FIREBASE_STORAGE_BUCKET_DOMAIN = 'security-cam-f322b.firebasestorage.app' # No se usa directamente, podría eliminarse
+FIREBASE_STORAGE_BUCKET_DOMAIN = 'security-cam-f322b.firebasestorage.app' # Mantenido según tu petición
 
 # Carpeta de imágenes a procesar y de embeddings EN FIREBASE
 FIREBASE_PATH_FOTOS = 'uploads/'             
@@ -28,8 +28,8 @@ FIREBASE_PATH_ALARMAS = 'alarmas_procesadas/'
 # ========== CONFIGURACIÓN LOCAL ==========
 CARPETA_LOCAL_FOTOS = '/tmp/fotos/'
 CARPETA_LOCAL_EMBEDDINGS = '/tmp/embeddings/'
-CARPETA_LOCAL_ALARMAS = '/tmp/alarmas_local/' # Se usa para guardar la imagen procesada antes de subirla
-for d in [CARPETA_LOCAL_FOTOS, CARPETA_LOCAL_EMBEDDINGS, CARPETA_LOCAL_ALARMAS]:
+# CARPETA_LOCAL_ALARMAS = '/tmp/alarmas_local/' # Eliminado - ya no se guarda localmente
+for d in [CARPETA_LOCAL_FOTOS, CARPETA_LOCAL_EMBEDDINGS]: # Solo inicializa las carpetas necesarias
     os.makedirs(d, exist_ok=True)
 
 # ========== CONFIGURACIÓN DE TU BACKEND MAIN3.PY ==========
@@ -68,9 +68,8 @@ except Exception as e:
 
 
 # ========== FUNCIONES AUXILIARES ==========
-def obtener_color_aleatorio():
-    # No se usa actualmente para dibujar, pero puede mantenerse si hay planes futuros
-    return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+# def obtener_color_aleatorio(): # Eliminado - no usado
+#     return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
 
 def agregar_borde_texto(imagen, texto, pos, fuente, tam, color_texto, color_borde, grosor):
     x, y = pos
@@ -174,7 +173,7 @@ def send_fcm_notification_direct(user_email, title, body, image_url=None, custom
                     data=custom_data or {}
                 )
                 print(f"DEBUG_FCM: Enviando mensaje a token: {token[:10]}...")
-                response = messaging.send(message) # Envío individual
+                response = messaging.send(message) # <-- Envío individual
                 print(f"DEBUG_FCM: Respuesta FCM para {token[:10]}: {response}")
                 success_count += 1
             except Exception as token_e:
@@ -335,12 +334,12 @@ def procesar_imagenes():
             # --- Lógica de Eventos y Notificaciones ---
             
             if len(conocidos_en_imagen) > 0 or len(rostros_desconocidos_validados) > 0 or len(personas_detectadas_bboxes) > 0:
-                output_filename = f"{nombre_archivo.split('.')[0]}_processed.jpg"
-                output_local_path = os.path.join(CARPETA_LOCAL_ALARMAS, output_filename)
-                cv2.imwrite(output_local_path, img_result) 
+                # Convertir la imagen procesada a bytes para subirla directamente
+                _, img_encoded = cv2.imencode('.jpg', img_result)
+                img_bytes = img_encoded.tobytes()
 
                 blob_processed = bucket.blob(FIREBASE_PATH_ALARMAS + output_filename)
-                blob_processed.upload_from_filename(output_local_path)
+                blob_processed.upload_from_string(img_bytes, content_type='image/jpeg') # <-- Subida desde bytes
                 blob_processed.make_public() 
                 image_public_url = blob_processed.public_url
                 print(f"[INFO] Imagen procesada subida a: {image_public_url}")
@@ -356,7 +355,7 @@ def procesar_imagenes():
                         "device_id": device_id
                     }
                     enviar_evento_a_main3(event_data) # Enviar a la API de historial
-                    send_fcm_notification_direct( # <-- ¡Aquí se llama la función que funciona!
+                    send_fcm_notification_direct( 
                         owner_email,
                         "Persona Conocida Detectada",
                         f"{nombre_conocido} fue detectado/a por la cámara {device_id}.",
@@ -380,8 +379,7 @@ def procesar_imagenes():
                                 if item['contador'] >= DETECCIONES_REQUERIDAS and \
                                    (current_utc_time - item.get('ultima_alarma', datetime.min.replace(tzinfo=timezone.utc))).total_seconds() > cooldown_seconds:
                                     
-                                    # Removed IFTTT alert call
-                                    send_fcm_notification_direct( # <-- ¡Aquí se llama la función que funciona!
+                                    send_fcm_notification_direct( 
                                         owner_email,
                                         "¡ALERTA DE INTRUSO!",
                                         f"Rostro desconocido detectado en la cámara {device_id}. Detecciones: {item['contador']}.",
@@ -407,8 +405,7 @@ def procesar_imagenes():
                             })
                     
                     if is_new_unknown_alarm: 
-                         # Removed IFTTT alert call
-                         send_fcm_notification_direct( # <-- ¡Aquí se llama la función que funciona!
+                         send_fcm_notification_direct( 
                             owner_email,
                             "Persona Desconocida Detectada",
                             f"Se detectó un rostro no identificado en la cámara {device_id}.",
@@ -431,8 +428,7 @@ def procesar_imagenes():
                 print(f"[INFO] Persona(s) sin rostro detectada ({persona_sin_rostro_contador}/{DETECCIONES_REQUERIDAS})")
                 if persona_sin_rostro_contador >= DETECCIONES_REQUERIDAS:
                     persona_sin_rostro_contador = 0
-                    # Removed IFTTT alert call
-                    send_fcm_notification_direct( # <-- ¡Aquí se llama la función que funciona!
+                    send_fcm_notification_direct( 
                         owner_email,
                         "Alerta: Persona sin Rostro",
                         f"Persona detectada sin rostro en cámara {device_id}.",
