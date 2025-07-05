@@ -64,6 +64,9 @@ storage_client = storage.Client()
 bucket = storage_client.get_bucket(BUCKET_NAME) 
 db = firestore.Client()
 
+# Define la zona horaria de Caracas (o la que te sea relevante)
+CARACAS_TIMEZONE = timezone(timedelta(hours=-4))
+
 # Inicializar cliente MQTT para Flask
 flask_mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID_FLASK, clean_session=True)
 
