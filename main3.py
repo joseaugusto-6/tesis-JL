@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify
+from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify, Response
 from google.cloud import storage, firestore
 from datetime import datetime, timedelta, timezone # Importa timedelta y timezone
 from werkzeug.security import generate_password_hash, check_password_hash
