@@ -35,6 +35,12 @@ is_streaming_active = False
 # Timestamp del último frame recibido (para detectar inactividad de la cámara fuente)
 last_frame_received_time = time.time() # Inicializa con tiempo actual
 
+# Imagen estática de "Stream No Disponible" (bytes JPEG codificados en base64)
+# Esta es una imagen de 1x1 pixel negro para ocupar el mínimo espacio.
+# Puedes reemplazarla por una tuya si la conviertes a base64.
+STATIC_NO_STREAM_IMAGE_BASE64 = b'/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAD/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AJAAAAAAAAA//9k='
+STATIC_NO_STREAM_IMAGE_BYTES = base64.b64decode(STATIC_NO_STREAM_IMAGE_BASE64) # Decodifica a bytes
+
 
 # Inicializa el cliente de Storage y Firestore
 storage_client = storage.Client()
@@ -493,47 +499,52 @@ def stream_upload():
 @jwt_required() # Proteger el stream para usuarios logueados
 def live_feed():
     def generate():
-        global is_streaming_active, last_frame_received_time # <-- ¡AÑADIDO GLOBAL AHORA!
-        boundary = "frame" 
+        global is_streaming_active, last_frame_received_time # Asegúrate de que last_frame_received_time es global aquí también
+        boundary = "frame" # El mismo boundary que en el mimetype
         
         no_frame_timeout_seconds = 10 # segundos sin frames para considerar stream inactivo
         
-        # Bucle de espera inicial para la cámara fuente
+        # Bucle de espera inicial para la cámara fuente (solo al inicio del stream)
         start_time = time.time()
-        while not is_streaming_active and (time.time() - start_time < no_frame_timeout_seconds):
-            print("Stream: Esperando que la cámara fuente esté activa...")
-            time.sleep(0.5) 
+        initial_wait_done = False
+        while not initial_wait_done:
+            if is_streaming_active and (time.time() - last_frame_received_time < no_frame_timeout_seconds):
+                initial_wait_done = True # Hay frames activos, podemos empezar
+            elif time.time() - start_time > no_frame_timeout_seconds:
+                print("Stream: No hay frames de la cámara fuente al inicio. Sirviendo imagen de espera.")
+                initial_wait_done = True # Terminar espera inicial, empezar a servir imagen de espera
+            else:
+                print("Stream: Esperando que la cámara fuente esté activa al inicio...")
+                time.sleep(0.5)
 
-        # Si después de esperar, no hay stream activo, o si se detiene
+        current_frame_to_send = STATIC_NO_STREAM_IMAGE_BYTES # Frame inicial por defecto si no hay nada
+
         while True:
-            # Verificar si el stream de la cámara fuente está inactivo
+            # Verificar si la cámara fuente está inactiva y actualizar is_streaming_active
             if time.time() - last_frame_received_time > no_frame_timeout_seconds:
-                print(f"Stream: Cámara fuente inactiva por {no_frame_timeout_seconds} segundos. Enviando frame de espera.")
-                # Opcional: enviar una imagen estática de "Stream no disponible" aquí
-                # Si descomentas esto, asegúrate de que STATIC_NO_STREAM_IMAGE_BASE64 esté definido y sea bytes JPEG válidos
-                # yield (b'--%s\r\nContent-Type: image/jpeg\r\n\r\n' % boundary.encode('utf-8') + base64.b64decode(STATIC_NO_STREAM_IMAGE_BASE64) + b'\r\n')
-                time.sleep(1) 
-                continue
-            
+                if is_streaming_active: # Solo print si el estado cambia a inactivo
+                    print(f"Stream: Cámara fuente inactiva por {no_frame_timeout_seconds} segundos.")
+                is_streaming_active = False
+                current_frame_to_send = STATIC_NO_STREAM_IMAGE_BYTES # Si inactiva, enviar imagen de espera
+            # Importante: Obtener un frame del buffer SOLO si no está vacío
             with frame_lock:
                 if not latest_frame_buffer.empty():
-                    frame = latest_frame_buffer.get()
-                else:
-                    frame = None 
-            
-            if frame:
-                # Incluir Content-Length para mayor robustez en el stream MJPEG
-                # Formato: --<boundary>\r\nContent-Type: image/jpeg\r\nContent-Length: <length>\r\n\r\n[JPEG DATA]\r\n
-                yield (
-                    b'--%s\r\n' % boundary.encode('utf-8') + 
-                    b'Content-Type: image/jpeg\r\n' +
-                    b'Content-Length: ' + str(len(frame)).encode() + b'\r\n' + 
-                    b'\r\n' + frame + b'\r\n'
-                )
-                # print("DEBUG: Frame enviado a WebView.") # Descomentar si quieres ver este log
+                    frame_from_buffer = latest_frame_buffer.get()
+                    current_frame_to_send = frame_from_buffer # Usar el frame nuevo
+                    is_streaming_active = True # El stream ha vuelto a estar activo
+                    last_frame_received_time = time.time() # Actualizar tiempo
 
-            else:
-                time.sleep(0.01) # Pausa más corta si no hay frame nuevo, para reintentar más rápido.
+            # Siempre yield un frame para mantener el stream HTTP activo
+            # Asegurarse de que el frame_lock no bloquee el yield prolongadamente
+            yield (
+                b'--%s\r\n' % boundary.encode('utf-8') + # Delimitador
+                b'Content-Type: image/jpeg\r\n' +
+                b'Content-Length: ' + str(len(current_frame_to_send)).encode() + b'\r\n' + # Longitud del frame JPEG
+                b'\r\n' + current_frame_to_send + b'\r\n' # Siempre enviar un frame
+            )
+            
+            # Pausa para controlar el framerate del stream hacia la WebView
+            time.sleep(0.05) # Enviar frames a 20 FPS a la WebView (ajustado de 0.01 a 0.05)
         
         print("Stream generator finished.") # Este código después del while True normalmente no se ejecuta en un stream infinito
 
