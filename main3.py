@@ -19,6 +19,7 @@ app.secret_key = 'supersecretkey'  # Cambia esto por algo más seguro en producc
 # Configuración JWT
 app.config["JWT_SECRET_KEY"] = "tu_clave_jwt_super_segura_aqui" # ¡CAMBIA ESTO! Debe ser la misma clave que usaste antes.
 jwt = JWTManager(app)
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=30)
 
 # Configuración de Google Cloud
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "security-cam-f322b-8adcddbcb279.json"
