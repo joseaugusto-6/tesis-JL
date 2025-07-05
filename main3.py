@@ -539,7 +539,7 @@ def live_feed():
 
             if frame:
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n') # <-- ¡CORRECCIÓN AQUÍ!
             else:
                 # Si no hay frames, esperar un poco antes de volver a intentar
                 time.sleep(0.05)
