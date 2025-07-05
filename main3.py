@@ -35,6 +35,7 @@ is_streaming_active = False
 # Timestamp del último frame recibido (para detectar inactividad de la cámara fuente)
 last_frame_received_time = time.time() # Inicializa con tiempo actual
 
+
 # Inicializa el cliente de Storage y Firestore
 storage_client = storage.Client()
 bucket = storage_client.get_bucket(BUCKET_NAME) 
@@ -382,30 +383,73 @@ def get_user_devices():
 
     return jsonify({"devices": devices}), 200
 
-# ------------------------ API PARA LLAMAR GCF Y ENVIAR FCM --------------------
-# Nota: Este endpoint y la GCF ya no son necesarios para FCM, ya que fi.py envía directo.
-# Se mantiene aquí por si lo necesitabas para otros fines o para documentar el camino.
-@app.route("/api/send_notification_via_gcf", methods=["POST"])
-def send_notification_via_gcf():
+# ------------------------ API AÑADIR NUEVO DISPOSITIVO -----------------------
+@app.route('/api/add_device', methods=['POST'])
+@jwt_required()
+def add_device_to_user():
     try:
+        current_user_email = get_jwt_identity()
         data = request.json
-        if not all(k in data for k in ['user_email', 'title', 'body']):
-            app.logger.warning(f"send_notification_via_gcf: Missing required fields in request: {data}")
-            return jsonify({"error": "Missing user_email, title, or body in request"}), 400
+        device_id_to_add = data.get('device_id', None)
 
-        # Si decides volver a usar GCF para FCM, descomenta esta parte
-        # gcf_response = requests.post(CLOUD_FUNCTION_FCM_URL, json=data)
-        # gcf_response.raise_for_status()
-        # return jsonify(gcf_response.json()), gcf_response.status_code
+        if not device_id_to_add:
+            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            app.logger.warning(f"add_device_to_user: User {current_user_email} not found.")
+            return jsonify({"msg": "Usuario no encontrado."}), 404
         
-        # Por ahora, simplemente devuelve una confirmación simulada si no usas GCF
-        return jsonify({"message": "GCF call simulated (FCM handled directly by fi.py now)"}), 200
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Error al llamar a la GCF: {e}")
-        return jsonify({"error": f"Failed to call Cloud Function: {str(e)}"}), 500
+        user_data = user_doc.to_dict()
+        current_devices = user_data.get('devices', [])
+
+        if device_id_to_add in current_devices:
+            return jsonify({"msg": "El dispositivo ya está asociado a este usuario."}), 409 # Conflict
+        
+        current_devices.append(device_id_to_add)
+        user_doc_ref.update({'devices': current_devices})
+
+        return jsonify({"msg": f"Dispositivo {device_id_to_add} añadido correctamente."}), 200
+
     except Exception as e:
-        app.logger.error(f"Error en send_notification_via_gcf: {e}")
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+        app.logger.error(f"Error al añadir dispositivo: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
+# ------------------------ API ELIMINAR DISPOSITIVO --------------------------
+@app.route('/api/remove_device', methods=['POST']) # O DELETE, pero POST es más fácil con body
+@jwt_required()
+def remove_device_from_user():
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        device_id_to_remove = data.get('device_id', None)
+
+        if not device_id_to_remove:
+            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            app.logger.warning(f"remove_device_from_user: User {current_user_email} not found.")
+            return jsonify({"msg": "Usuario no encontrado."}), 404
+        
+        user_data = user_doc.to_dict()
+        current_devices = user_data.get('devices', [])
+
+        if device_id_to_remove not in current_devices:
+            return jsonify({"msg": "El dispositivo no está asociado a este usuario."}), 404 # Not Found
+        
+        current_devices.remove(device_id_to_remove) # Elimina el dispositivo de la lista
+        user_doc_ref.update({'devices': current_devices})
+
+        return jsonify({"msg": f"Dispositivo {device_id_to_remove} eliminado correctamente."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al eliminar dispositivo: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
 # ------------------------ API PARA RECIBIR STREAM DE PC -------------------------------
 @app.route('/api/stream_upload', methods=['POST'])
@@ -449,15 +493,16 @@ def stream_upload():
 @jwt_required() # Proteger el stream para usuarios logueados
 def live_feed():
     def generate():
-        boundary = "frame" # El mismo boundary que en el mimetype
+        global is_streaming_active, last_frame_received_time # <-- ¡AÑADIDO GLOBAL AHORA!
+        boundary = "frame" 
         
-        no_frame_timeout_seconds = 10 # Aumentar a 10 segundos antes de considerar stream inactivo
+        no_frame_timeout_seconds = 10 # segundos sin frames para considerar stream inactivo
         
-        # Asegurar que el stream está activo al inicio o esperar un momento
+        # Bucle de espera inicial para la cámara fuente
         start_time = time.time()
         while not is_streaming_active and (time.time() - start_time < no_frame_timeout_seconds):
             print("Stream: Esperando que la cámara fuente esté activa...")
-            time.sleep(0.5) # Esperar a que los frames empiecen a llegar
+            time.sleep(0.5) 
 
         # Si después de esperar, no hay stream activo, o si se detiene
         while True:
@@ -465,35 +510,32 @@ def live_feed():
             if time.time() - last_frame_received_time > no_frame_timeout_seconds:
                 print(f"Stream: Cámara fuente inactiva por {no_frame_timeout_seconds} segundos. Enviando frame de espera.")
                 # Opcional: enviar una imagen estática de "Stream no disponible" aquí
-                # Ejemplo: yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + your_static_image_bytes + b'\r\n\r\n')
-                time.sleep(1) # Pequeña pausa para no saturar
+                # Si descomentas esto, asegúrate de que STATIC_NO_STREAM_IMAGE_BASE64 esté definido y sea bytes JPEG válidos
+                # yield (b'--%s\r\nContent-Type: image/jpeg\r\n\r\n' % boundary.encode('utf-8') + base64.b64decode(STATIC_NO_STREAM_IMAGE_BASE64) + b'\r\n')
+                time.sleep(1) 
                 continue
             
             with frame_lock:
                 if not latest_frame_buffer.empty():
                     frame = latest_frame_buffer.get()
-                    last_frame_received_time = time.time()
                 else:
-                    frame = None # No hay frame nuevo, esperar
+                    frame = None 
             
             if frame:
-                print(f"DEBUG_STREAM: Yielding frame of size {len(frame)} bytes.") # DEBUG: ver el tamaño del frame que se envia
                 # Incluir Content-Length para mayor robustez en el stream MJPEG
                 # Formato: --<boundary>\r\nContent-Type: image/jpeg\r\nContent-Length: <length>\r\n\r\n[JPEG DATA]\r\n
                 yield (
-                    b'--%s\r\n' % boundary.encode('utf-8') + # Delimitador
+                    b'--%s\r\n' % boundary.encode('utf-8') + 
                     b'Content-Type: image/jpeg\r\n' +
-                    b'Content-Length: ' + str(len(frame)).encode() + b'\r\n' + # Longitud del frame JPEG
-                    b'\r\n' + frame + b'\r\n' # Doble \r\n después de headers, simple \r\n después del frame
+                    b'Content-Length: ' + str(len(frame)).encode() + b'\r\n' + 
+                    b'\r\n' + frame + b'\r\n'
                 )
-                print("DEBUG: Frame enviado a WebView.") # Descomentar si quieres ver este log
+                # print("DEBUG: Frame enviado a WebView.") # Descomentar si quieres ver este log
 
             else:
-                print("DEBUG_STREAM: No frame in buffer, waiting.") # DEBUG: si no hay frame disponible
                 time.sleep(0.01) # Pausa más corta si no hay frame nuevo, para reintentar más rápido.
         
-        # Este código después del while True normalmente no se ejecuta en un stream infinito
-        print("Stream generator finished.")
+        print("Stream generator finished.") # Este código después del while True normalmente no se ejecuta en un stream infinito
 
     # Encabezados HTTP para el stream MJPEG
     headers = {
@@ -504,8 +546,7 @@ def live_feed():
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*', # Permitir CORS
     }
-    # La Response de Flask construye la cabecera HTTP inicial.
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame', headers=headers) # <-- Asegúrate de pasar headers aquí
+    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame', headers=headers)
 # ------------------------ FIN API PARA RE-TRANSMITIR STREAM A LA APP --------------------
 
 if __name__ == "__main__":
