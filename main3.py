@@ -423,7 +423,7 @@ def get_dashboard_data():
         'alarms_today': alarms_today
     }), 200
 
-# Nuevo endpoint para obtener la lista de dispositivos del usuario
+# ------------------API para obtener la lista de dispositivos del usuario -------------------
 @app.route('/api/user_devices', methods=['GET'])
 @jwt_required()
 def get_user_devices():
@@ -435,11 +435,25 @@ def get_user_devices():
     if not user_doc.exists:
         app.logger.warning(f"get_user_devices: User {current_user_email} not found.")
         return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
-    
-    user_data = user_doc.to_dict()
-    devices = user_data.get('devices', []) # Obtiene la lista de dispositivos del usuario
 
-    return jsonify({"devices": devices}), 200
+    user_data = user_doc.to_dict()
+    # Obtiene la lista de dispositivos del usuario desde Firestore
+    devices_from_firestore = user_data.get('devices', []) 
+
+    # Lista para almacenar los dispositivos con su estado
+    devices_with_status = []
+    with camera_status_lock: # Acceder al diccionario global de estados de cámara
+        for device_id in devices_from_firestore:
+            status_info = camera_status.get(device_id) # Obtener el estado de la cámara
+            mode = status_info['mode'] if status_info else 'UNKNOWN'
+            # Puedes añadir más detalles aquí si los necesitas, ej. timestamp del estado
+            devices_with_status.append({
+                'id': device_id,
+                'mode': mode,
+                'is_active': status_info is not None and (datetime.now() - status_info['timestamp']).total_seconds() < 60 # Considerar activa si el último reporte es de hace menos de 60s
+            })
+
+    return jsonify({"devices": devices_with_status}), 200 # Devuelve una lista de diccionarios), 200
 
 # ------------------------ API AÑADIR NUEVO DISPOSITIVO -----------------------
 @app.route('/api/add_device', methods=['POST'])
