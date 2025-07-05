@@ -35,6 +35,9 @@
         const cameraId = getUrlParameter('camera_id');
         const sessionToken = getUrlParameter('session_token');
 
+        // URL del endpoint que sirve la última imagen JPEG para polling
+        const API_LATEST_FRAME_URL = '/api/latest_frame'; // <--- ¡CAMBIO CLAVE AQUÍ!
+
         if (!cameraId || !sessionToken) {
             streamStatus.textContent = 'Error: Faltan parámetros de cámara o token de sesión.';
             streamStatus.classList.add('error');
@@ -43,11 +46,12 @@
             streamStatus.textContent = `Conectando a cámara ${cameraId}...`;
 
             function fetchStreamFrame() {
-                const url = `/api/live_feed?camera_id=${cameraId}&session_token=${sessionToken}&_t=${new Date().getTime()}`; // _t para evitar caché
+                // Añadir timestamp para evitar caché y pasar camera_id y session_token
+                const url = `${API_LATEST_FRAME_URL}?camera_id=${cameraId}&session_token=${sessionToken}&_t=${new Date().getTime()}`; 
                 fetch(url)
                     .then(response => {
                         if (response.ok) {
-                            return response.blob(); // Obtener la imagen como un Blob
+                            return response.blob(); 
                         } else if (response.status === 401) {
                             throw new Error('Token de sesión inválido o expirado. Por favor, reinicie la aplicación.');
                         } else {
@@ -55,19 +59,21 @@
                         }
                     })
                     .then(imageBlob => {
-                        const imageUrl = URL.createObjectURL(imageBlob); // Crear una URL para el Blob
-                        streamImg.src = imageUrl;
-                        streamImg.onload = () => {
-                            URL.revokeObjectURL(imageUrl); // Liberar la URL del Blob una vez cargada
-                            streamStatus.textContent = `Estado: Conectado a ${cameraId}`;
+                        const imageUrl = URL.createObjectURL(imageBlob); 
+                        // Solo actualizar el src si es una nueva imagen para evitar parpadeos
+                        if (streamImg.src !== imageUrl) {
+                            streamImg.src = imageUrl;
+                            streamImg.onload = () => {
+                                URL.revokeObjectURL(imageUrl); // Liberar la URL del Blob una vez cargada
+                                streamStatus.textContent = `Estado: Conectado a ${cameraId}`;
+                                streamStatus.classList.remove('error');
+                                spinner.style.display = 'none';
+                            };
+                        }
+                        // Si el stream estaba en error, limpiarlo
+                        if (streamStatus.classList.contains('error')) {
                             streamStatus.classList.remove('error');
-                            spinner.style.display = 'none';
-                        };
-                        streamImg.onerror = () => {
-                            streamStatus.textContent = `Error: No se pudo cargar el frame de ${cameraId}.`;
-                            streamStatus.classList.add('error');
-                            spinner.style.display = 'none';
-                        };
+                        }
                     })
                     .catch(error => {
                         streamStatus.textContent = `Error de conexión: ${error.message}`;
