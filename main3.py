@@ -5,7 +5,7 @@ from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 import requests # Para hacer peticiones HTTP (a la Cloud Function)
-
+ARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # GMT-4
 # Inicializaciones básicas
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'  # Cambia esto por algo más seguro en producción
@@ -310,31 +310,72 @@ def get_event_history():
 @jwt_required()
 def get_dashboard_data():
     current_user_email = get_jwt_identity()
+    
+    # Obtener la lista de dispositivos asociados a este usuario
+    user_doc_ref = db.collection('usuarios').document(current_user_email)
+    user_doc = user_doc_ref.get()
 
-    # Obtener eventos del usuario logueado, ordenados por timestamp descendente
-    # y limitados a, por ejemplo, los últimos 5 para el resumen.
-    events_ref = db.collection('eventos').where('user_email', '==', current_user_email).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(5)
-    latest_events = events_ref.stream()
+    if not user_doc.exists:
+        app.logger.warning(f"get_dashboard_data: User {current_user_email} not found.")
+        return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
+    
+    user_data = user_doc.to_dict()
+    user_devices = user_data.get('devices', [])
 
+    if not user_devices:
+        return jsonify({
+            'latest_events': [],
+            'total_entries_today': 0,
+            'alarms_today': 0
+        }), 200 # Si el usuario no tiene dispositivos, devuelve listas vacías y ceros
+
+    # --- Lógica para obtener los últimos eventos ---
+    # Filtrar por los dispositivos del usuario y ordenar por timestamp descendente
+    latest_events_query = db.collection('events') \
+                          .where('device_id', 'in', user_devices) \
+                          .order_by('timestamp', direction=firestore.Query.DESCENDING) \
+                          .limit(5) # Últimos 5 eventos para el resumen del dashboard
+    
     events_list = []
-    for event in latest_events:
+    for event in latest_events_query.stream(): # <-- Usando 'events'
         event_data = event.to_dict()
         events_list.append({
-            'id': event.id,
-            'type': event_data.get('type'),
-            'timestamp': event_data.get('timestamp').isoformat(), # Convertir a string ISO 8601
-            'image_url': event_data.get('image_url'),
-            'details': event_data.get('details', {})
+            'id': event.id, # Incluir el ID del documento si es útil
+            'person_name': event_data.get('person_name', 'Desconocido'),
+            'event_type': event_data.get('event_type', 'unknown'),
+            'timestamp': event_data.get('timestamp').isoformat() if isinstance(event_data.get('timestamp'), datetime) else event_data.get('timestamp'), # Asegurar formato ISO
+            'image_url': event_data.get('image_url', ''),
+            'event_details': event_data.get('event_details', ''),
+            'device_id': event_data.get('device_id', 'unknown')
         })
 
-    # Opcional: Calcular estadísticas (ej. eventos hoy, alarmas hoy)
-    # Para esto necesitaríamos una consulta más compleja, por ahora solo los últimos eventos.
-    # Si quieres añadir estadísticas, podemos hacerlo en un paso posterior.
+    # --- Lógica para calcular estadísticas diarias (Entradas Hoy, Alarmas Hoy) ---
+    # Obtener la fecha de hoy en la zona horaria de Caracas
+    now_caracas = datetime.now(CARACAS_TIMEZONE)
+    today_start = now_caracas.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now_caracas.replace(hour=23, minute=59, second=59, microsecond=999999)
 
+    # Consulta para todos los eventos de hoy
+    # Usamos 'events' como la colección aquí también
+    today_events_query = db.collection('events') \
+                          .where('device_id', 'in', user_devices) \
+                          .where('timestamp', '>=', today_start) \
+                          .where('timestamp', '<=', today_end)
+    
+    total_entries_today = 0
+    alarms_today = 0
+
+    for event in today_events_query.stream(): # <-- Usando 'events'
+        event_data = event.to_dict()
+        total_entries_today += 1
+        # Considera qué tipos de evento deben contar como "alarma"
+        if event_data.get('event_type') in ['alarm', 'unknown_person', 'unknown_person_repeated_alarm', 'person_no_face_alarm']:
+            alarms_today += 1
+    
     return jsonify({
         'latest_events': events_list,
-        'total_entries_today': 0, # Placeholder, se implementará después si es necesario
-        'alarms_today': 0 # Placeholder, se implementará después si es necesario
+        'total_entries_today': total_entries_today,
+        'alarms_today': alarms_today
     }), 200
 
 
