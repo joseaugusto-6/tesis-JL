@@ -9,6 +9,7 @@ import threading
 import time 
 import queue 
 import base64 
+import uuid # Para generar tokens de sesión de stream
 
 # Inicializaciones básicas
 app = Flask(__name__)
@@ -25,20 +26,20 @@ BUCKET_NAME = "security-cam-f322b.firebasestorage.app"
 # URL de tu Google Cloud Function para enviar FCM
 CLOUD_FUNCTION_FCM_URL = "https://sendfcmnotification-614861377558.us-central1.run.app" # <-- ¡PEGA AQUI LA URL REAL DE TU GCF!
 
-# ========== CONFIGURACIÓN PARA STREAM DE VIDEO ==========
-# Buffer para el último frame de video recibido (usamos Queue para thread-safety)
-latest_frame_buffer = queue.Queue(maxsize=1) # Guarda solo el último frame
-# Candado para proteger el acceso al buffer (aunque Queue ya es thread-safe, buena práctica)
-frame_lock = threading.Lock()
-# Flag para indicar si hay un stream activo (si se están recibiendo frames de la cámara fuente)
-is_streaming_active = False
-# Timestamp del último frame recibido (para detectar inactividad de la cámara fuente)
-last_frame_received_time = time.time() # Inicializa con tiempo actual
+# ========== CONFIGURACIÓN PARA STREAM DE VIDEO (Polling de Imágenes) ==========
+# Diccionario global para almacenar el último frame de cada cámara
+# Formato: { "camera_id": {"frame": <bytes>, "timestamp": <datetime>} }
+latest_frames = {}
+frames_lock = threading.Lock()
+
+# Diccionario global para almacenar tokens de sesión de stream activos
+# Formato: { "session_token": {"user_id": <id>, "camera_id": <id>, "expires": <datetime>} }
+stream_sessions = {}
+sessions_lock = threading.Lock()
 
 # Imagen estática de "Stream No Disponible" (bytes JPEG codificados en base64)
-# Esta es una imagen de 1x1 pixel negro para ocupar el mínimo espacio.
-# Puedes reemplazarla por una tuya si la conviertes a base64.
-STATIC_NO_STREAM_IMAGE_BASE64 = b'/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAD/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJAAAAAAAAA//9k='
+# Esta es una imagen de 1x1 pixel negro.
+STATIC_NO_STREAM_IMAGE_BASE64 = b'/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAD/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwAAARECEQD/AJAAAAAAAAA//9k='
 STATIC_NO_STREAM_IMAGE_BYTES = base64.b64decode(STATIC_NO_STREAM_IMAGE_BASE64) # Decodifica a bytes
 
 
@@ -494,76 +495,222 @@ def stream_upload():
 
 # ------------------------ FIN API PARA RECIBIR STREAM DE PC ---------------------------
 
-# ------------------------ API PARA RE-TRANSMITIR STREAM A LA APP ------------------------
+# ------------------------ API PARA RE-TRANSMITIR STREAM A LA APP (via Polling) ------------------------
 @app.route('/api/live_feed', methods=['GET'])
-#@jwt_required() # Proteger el stream para usuarios logueados
+@jwt_required() # Proteger el stream para usuarios logueados
 def live_feed():
-    def generate():
-        global is_streaming_active, last_frame_received_time # Asegúrate de que last_frame_received_time es global aquí también
-        boundary = "frame" # El mismo boundary que en el mimetype
+    # Este endpoint ya no es el que sirve el stream MJPEG continuo a WebView.
+    # Ahora es para la página web que hará polling de /api/latest_frame
+    # Mantener @jwt_required() porque la app Flutter usará este endpoint para validar si la cámara está "viva"
+
+    # La lógica de generación MJPEG se ha movido/cambiado a /api/latest_frame
+    # Este endpoint podría ahora simplemente devolver un estado de "stream activo"
+    # o si se accediera desde una página web, simplemente redirigir al /latest_frame
+    return jsonify({"message": "Use /api/latest_frame for polling stream."}), 200 # <-- Retorno de ejemplo si se accede aquí
+
+# ------------------------ API PARA SERVIR EL ÚLTIMO FRAME (para polling) ------------------------
+@app.route('/api/latest_frame', methods=['GET'])
+@jwt_required() # Proteger el acceso a la última imagen
+def latest_frame():
+    # Obtener el camera_id del request arguments
+    camera_id = request.args.get('camera_id')
+    if not camera_id:
+        return Response(b'{"error": "Missing camera_id parameter."}', mimetype='application/json', status=400) # Devolver JSON de error
+
+    with frame_lock:
+        frame_data_for_camera = latest_frames.get(camera_id) # Obtener frame específico para esta camera_id
+
+    # Verificar si el frame es reciente (no más de 15 segundos, por ejemplo)
+    if frame_data_for_camera and (time.time() - frame_data_for_camera['timestamp'].timestamp()) < 15: # Usar .timestamp() para comparar con time.time()
+        return Response(frame_data_for_camera['frame'], mimetype='image/jpeg')
+    else:
+        # Si no hay frames recientes para esa cámara, o la cámara no existe, devolver la imagen estática
+        return Response(STATIC_NO_STREAM_IMAGE_BYTES, mimetype='image/jpeg')
+
+# ------------------------ FIN API PARA SERVIR EL ÚLTIMO FRAME --------------------
+
+# Nuevo endpoint para obtener la lista de dispositivos del usuario
+@app.route('/api/user_devices', methods=['GET'])
+@jwt_required()
+def get_user_devices():
+    current_user_email = get_jwt_identity()
+
+    user_doc_ref = db.collection('usuarios').document(current_user_email)
+    user_doc = user_doc_ref.get()
+
+    if not user_doc.exists:
+        app.logger.warning(f"get_user_devices: User {current_user_email} not found.")
+        return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
+    
+    user_data = user_doc.to_dict()
+    devices = user_data.get('devices', []) # Obtiene la lista de dispositivos del usuario
+
+    return jsonify({"devices": devices}), 200
+
+# ------------------------ API AÑADIR NUEVO DISPOSITIVO -----------------------
+@app.route('/api/add_device', methods=['POST'])
+@jwt_required()
+def add_device_to_user():
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        device_id_to_add = data.get('device_id', None)
+
+        if not device_id_to_add:
+            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            app.logger.warning(f"add_device_to_user: User {current_user_email} not found.")
+            return jsonify({"msg": "Usuario no encontrado."}), 404
         
-        no_frame_timeout_seconds = 10 # segundos sin frames para considerar stream inactivo
+        user_data = user_doc.to_dict()
+        current_devices = user_data.get('devices', [])
+
+        if device_id_to_add in current_devices:
+            return jsonify({"msg": "El dispositivo ya está asociado a este usuario."}), 409 # Conflict
         
-        # Bucle de espera inicial para la cámara fuente (solo al inicio del stream)
-        start_time = time.time()
-        initial_wait_done = False
-        while not initial_wait_done:
-            if is_streaming_active and (time.time() - last_frame_received_time < no_frame_timeout_seconds):
-                initial_wait_done = True # Hay frames activos, podemos empezar
-            elif time.time() - start_time > no_frame_timeout_seconds:
-                print("Stream: No hay frames de la cámara fuente al inicio. Sirviendo imagen de espera.")
-                initial_wait_done = True # Terminar espera inicial, empezar a servir imagen de espera
+        current_devices.append(device_id_to_add)
+        user_doc_ref.update({'devices': current_devices})
+
+        return jsonify({"msg": f"Dispositivo {device_id_to_add} añadido correctamente."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al añadir dispositivo: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
+# ------------------------ API ELIMINAR DISPOSITIVO --------------------------
+@app.route('/api/remove_device', methods=['POST']) # O DELETE, pero POST es más fácil con body
+@jwt_required()
+def remove_device_from_user():
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        device_id_to_remove = data.get('device_id', None)
+
+        if not device_id_to_remove:
+            return jsonify({"msg": "Falta el ID del dispositivo"}), 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            app.logger.warning(f"remove_device_from_user: User {current_user_email} not found.")
+            return jsonify({"msg": "Usuario no encontrado."}), 404
+        
+        user_data = user_doc.to_dict()
+        current_devices = user_data.get('devices', [])
+
+        if device_id_to_remove not in current_devices:
+            return jsonify({"msg": "El dispositivo no está asociado a este usuario."}), 404 # Not Found
+        
+        current_devices.remove(device_id_to_remove) # Elimina el dispositivo de la lista
+        user_doc_ref.update({'devices': current_devices})
+
+        return jsonify({"msg": f"Dispositivo {device_id_to_remove} eliminado correctamente."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al eliminar dispositivo: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
+# ------------------------ API PARA RECIBIR STREAM DE PC -------------------------------
+@app.route('/api/stream_upload', methods=['POST'])
+def stream_upload():
+    global is_streaming_active, last_frame_received_time # Acceder a la variable global
+    try:
+        # Esperamos que el frame se envíe como un archivo binario o base64 en el cuerpo
+        # Si se envía como 'file' en form-data:
+        if 'frame' not in request.files:
+            # O si se envía como raw binary data:
+            if request.data:
+                frame_data = request.data
             else:
-                print("Stream: Esperando que la cámara fuente esté activa al inicio...")
-                time.sleep(0.5)
+                return jsonify({"error": "No se recibió frame de video."}), 400
+        else:
+            frame_data = request.files['frame'].read()
+            print("Recibido frame como file") # DEBUG
 
-        current_frame_to_send = STATIC_NO_STREAM_IMAGE_BYTES # Frame inicial por defecto si no hay nada
-
-        while True:
-            # Verificar si la cámara fuente está inactiva y actualizar is_streaming_active
-            if time.time() - last_frame_received_time > no_frame_timeout_seconds:
-                if is_streaming_active: # Solo print si el estado cambia a inactivo
-                    print(f"Stream: Cámara fuente inactiva por {no_frame_timeout_seconds} segundos.")
-                is_streaming_active = False
-                current_frame_to_send = STATIC_NO_STREAM_IMAGE_BYTES # Si inactiva, enviar imagen de espera
-            # Importante: Obtener un frame del buffer SOLO si no está vacío
-            with frame_lock:
-                if not latest_frame_buffer.empty():
-                    frame_from_buffer = latest_frame_buffer.get()
-                    current_frame_to_send = frame_from_buffer # Usar el frame nuevo
-                    is_streaming_active = True # El stream ha vuelto a estar activo
-                    last_frame_received_time = time.time() # Actualizar tiempo
-
-            # Siempre yield un frame para mantener el stream HTTP activo
-            # Asegurarse de que el frame_lock no bloquee el yield prolongadamente
-            yield (
-                b'--%s\r\n' % boundary.encode('utf-8') + # Delimitador
-                b'Content-Type: image/jpeg\r\n' +
-                b'Content-Length: ' + str(len(current_frame_to_send)).encode() + b'\r\n' + # Longitud del frame JPEG
-                b'\r\n' + current_frame_to_send + b'\r\n' # Siempre enviar un frame
-            )
-            
-            # Pausa para controlar el framerate del stream hacia la WebView
-            time.sleep(0.05) # Enviar frames a 20 FPS a la WebView (ajustado de 0.01 a 0.05)
+        if not frame_data:
+            return jsonify({"error": "Frame de video vacío."}), 400
         
-        print("Stream generator finished.") # Este código después del while True normalmente no se ejecuta en un stream infinito
+        camera_id = request.form.get('camera_id', 'default_camera') # Obtener camera_id del form-data
+        if not camera_id:
+            return jsonify({"error": "Missing camera_id in form data."}), 400
 
-    # Encabezados HTTP para el stream MJPEG
-    headers = {
-        'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
-        'Cache-Control': 'no-cache, no-store, max-age=0, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*', # Permitir CORS
-    }
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame', headers=headers)
-# ------------------------ FIN API PARA RE-TRANSMITIR STREAM A LA APP --------------------
+        # Guardar el último frame para la camera_id específica en el diccionario
+        with frame_lock:
+            latest_frames[camera_id] = {"frame": frame_data, "timestamp": datetime.now()}
+            # Actualizar el estado general del stream si es el primer frame o si vuelve a estar activo
+            if not is_streaming_active:
+                is_streaming_active = True
+            last_frame_received_time = time.time() # Actualizar tiempo de último frame general
+        
+        return jsonify({"message": "Frame recibido."}), 200
+    except Exception as e:
+        app.logger.error(f"Error al recibir frame de stream: {e}")
+        # Considerar si todos los streams están inactivos, no solo uno
+        # is_streaming_active = False # Esta variable ahora es más para el estado general
+        return jsonify({"error": str(e)}), 500
+
+# ------------------------ FIN API PARA RECIBIR STREAM DE PC ---------------------------
+
+# ------------------------ API PARA LLAMAR GCF Y ENVIAR FCM (SIMULADA AHORA) --------------------
+@app.route("/api/send_notification_via_gcf", methods=["POST"])
+def send_notification_via_gcf():
+    try:
+        data = request.json
+        if not all(k in data for k in ['user_email', 'title', 'body']):
+            app.logger.warning(f"send_notification_via_gcf: Missing required fields in request: {data}")
+            return jsonify({"error": "Missing user_email, title, or body in request"}), 400
+        return jsonify({"message": "GCF call simulated (FCM handled directly by fi.py now)"}), 200
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"Error al llamar a la GCF: {e}")
+        return jsonify({"error": f"Failed to call Cloud Function: {str(e)}"}), 500
+    except Exception as e:
+        app.logger.error(f"Error en send_notification_via_gcf: {e}")
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+# ------------------------ FIN API PARA LLAMAR GCF Y ENVIAR FCM (SIMULADA AHORA) --------------------
+
+# ------------------------ API PARA OBTENER UN TOKEN DE SESIÓN PARA EL STREAM ------------------------
+@app.route('/api/get_stream_session_token', methods=['POST'])
+@jwt_required()
+def get_stream_session_token():
+    user_id = get_jwt_identity() # Obtiene el ID del usuario del token JWT
+    camera_id = request.json.get('camera_id')
+
+    if not camera_id:
+        return jsonify({"msg": "Missing camera_id"}), 400
+
+    # TODO: En una aplicación real, aquí deberías verificar si 'user_id' está autorizado para 'camera_id'.
+    # Por ahora, asumimos que si el usuario está autenticado, puede solicitar un token para cualquier cámara.
+
+    session_token = str(uuid.uuid4()) # Genera un UUID único como token
+    expires_at = datetime.now() + timedelta(minutes=5) # Token válido por 5 minutos
+
+    with sessions_lock:
+        stream_sessions[session_token] = {
+            "user_id": user_id,
+            "camera_id": camera_id,
+            "expires": expires_at
+        }
+    
+    return jsonify({"session_token": session_token, "expires_at": expires_at.isoformat()}), 200
+
+# ------------------------ FIN API PARA OBTENER UN TOKEN DE SESIÓN --------------------
 
 # ------------------------ RUTA WEB PARA EL STREAM -------------------------------
 @app.route('/live_stream', methods=['GET'])
 def live_stream_web_page():
-    return render_template('live_stream_page.html')
+    camera_id = request.args.get('camera_id')
+    session_token = request.args.get('session_token')
+
+    if not camera_id or not session_token:
+        return "Error: Faltan parámetros de cámara o token de sesión en la URL.", 400
+    
+    # Pasa los parámetros a la plantilla HTML
+    return render_template('live_stream_page.html', camera_id=camera_id, session_token=session_token)
 # ------------------------ FIN RUTA WEB PARA EL STREAM ---------------------------
 
 if __name__ == "__main__":

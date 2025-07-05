@@ -4,30 +4,83 @@
     <title>Video en Vivo - Camara de Seguridad</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { background-color: #f0f0f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; }
+        body { background-color: #f0f0f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; overflow: hidden; }
         h1 { color: #333; margin-bottom: 20px; }
-        img { border: 1px solid #ccc; max-width: 100%; height: auto; display: block; }
+        #liveStream { border: 1px solid #ccc; max-width: 100%; height: auto; display: block; background-color: black; }
         .status { margin-top: 10px; font-size: 1.1em; color: #555; }
         .error { color: red; font-weight: bold; }
+        .loading-spinner { border: 4px solid rgba(0, 0, 0, 0.1); border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-top: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
     <h1>Video en Vivo</h1>
-    <img id="liveStream" src="/api/live_feed" alt="Video en Vivo">
-    <p class="status">Cargando stream...</p>
+    <img id="liveStream" src="" alt="Cargando video...">
+    <div class="loading-spinner" id="spinner"></div>
+    <p class="status" id="streamStatus">Conectando...</p>
 
     <script>
-        // Script para manejar errores básicos si la imagen no carga
-        document.getElementById('liveStream').onerror = function() {
-            this.alt = 'Stream no disponible. Verifique que la cámara esté activa.';
-            this.style.border = '2px dashed red';
-            document.querySelector('.status').textContent = 'Estado: ¡Error al cargar el stream!';
-            document.querySelector('.status').classList.add('error');
+        const streamImg = document.getElementById('liveStream');
+        const streamStatus = document.getElementById('streamStatus');
+        const spinner = document.getElementById('spinner');
+
+        // Función para obtener parámetros de la URL
+        function getUrlParameter(name) {
+            name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+            var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+            var results = regex.exec(location.search);
+            return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
         };
-        document.getElementById('liveStream').onload = function() {
-            document.querySelector('.status').textContent = 'Estado: Conectado';
-            document.querySelector('.status').classList.remove('error');
-        };
+
+        const cameraId = getUrlParameter('camera_id');
+        const sessionToken = getUrlParameter('session_token');
+
+        if (!cameraId || !sessionToken) {
+            streamStatus.textContent = 'Error: Faltan parámetros de cámara o token de sesión.';
+            streamStatus.classList.add('error');
+            spinner.style.display = 'none';
+        } else {
+            streamStatus.textContent = `Conectando a cámara ${cameraId}...`;
+
+            function fetchStreamFrame() {
+                const url = `/api/live_feed?camera_id=${cameraId}&session_token=${sessionToken}&_t=${new Date().getTime()}`; // _t para evitar caché
+                fetch(url)
+                    .then(response => {
+                        if (response.ok) {
+                            return response.blob(); // Obtener la imagen como un Blob
+                        } else if (response.status === 401) {
+                            throw new Error('Token de sesión inválido o expirado. Por favor, reinicie la aplicación.');
+                        } else {
+                            throw new Error(`Error del servidor: ${response.status} ${response.statusText}`);
+                        }
+                    })
+                    .then(imageBlob => {
+                        const imageUrl = URL.createObjectURL(imageBlob); // Crear una URL para el Blob
+                        streamImg.src = imageUrl;
+                        streamImg.onload = () => {
+                            URL.revokeObjectURL(imageUrl); // Liberar la URL del Blob una vez cargada
+                            streamStatus.textContent = `Estado: Conectado a ${cameraId}`;
+                            streamStatus.classList.remove('error');
+                            spinner.style.display = 'none';
+                        };
+                        streamImg.onerror = () => {
+                            streamStatus.textContent = `Error: No se pudo cargar el frame de ${cameraId}.`;
+                            streamStatus.classList.add('error');
+                            spinner.style.display = 'none';
+                        };
+                    })
+                    .catch(error => {
+                        streamStatus.textContent = `Error de conexión: ${error.message}`;
+                        streamStatus.classList.add('error');
+                        spinner.style.display = 'none';
+                        // console.error('Error fetching stream:', error);
+                    });
+            }
+
+            // Iniciar el polling de frames cada 200ms (5 FPS)
+            setInterval(fetchStreamFrame, 200);
+            fetchStreamFrame(); // Llamada inicial para cargar el primer frame rápidamente
+        }
     </script>
 </body>
 </html>
