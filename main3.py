@@ -5,6 +5,10 @@ from datetime import datetime, timedelta, timezone # Importa timedelta y timezon
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 import requests
+import threading 
+import time 
+import queue 
+import base64  
 
 # Inicializaciones básicas
 app = Flask(__name__)
@@ -20,6 +24,14 @@ BUCKET_NAME = "security-cam-f322b.firebasestorage.app"
 
 # URL de tu Google Cloud Function para enviar FCM
 CLOUD_FUNCTION_FCM_URL = "https://sendfcmnotification-614861377558.us-central1.run.app" # <-- ¡PEGA AQUI LA URL REAL DE TU GCF!
+
+# ========== CONFIGURACIÓN PARA STREAM DE VIDEO ==========
+# Buffer para el último frame de video recibido (usamos Queue para thread-safety)
+latest_frame_buffer = queue.Queue(maxsize=1) # Guarda solo el último frame
+# Candado para proteger el acceso al buffer (aunque Queue ya es thread-safe, buena práctica)
+frame_lock = threading.Lock()
+# Flag para indicar si hay un stream activo
+is_streaming_active = False
 
 # Inicializa el cliente de Storage y Firestore
 storage_client = storage.Client()
@@ -395,7 +407,7 @@ def send_notification_via_gcf():
 
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
-#----------------- API añadir un dispositivo al usuario -----------------------
+#----------------- API AÑADIR NUEVO DISPOSITIVO -----------------------
 @app.route('/api/add_device', methods=['POST'])
 @jwt_required()
 def add_device_to_user():
@@ -462,6 +474,79 @@ def remove_device_from_user():
     except Exception as e:
         app.logger.error(f"Error al eliminar dispositivo: {e}")
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
+# ------------------------ API PARA RECIBIR STREAM DE PC -------------------------------
+@app.route('/api/stream_upload', methods=['POST'])
+def stream_upload():
+    global is_streaming_active # Acceder a la variable global
+    try:
+        # Esperamos que el frame se envíe como un archivo binario o base64 en el cuerpo
+        # Si se envía como 'file' en form-data:
+        if 'frame' not in request.files:
+            # O si se envía como raw binary data:
+            if request.data:
+                frame_data = request.data
+                # print("Recibido frame como raw data") # DEBUG
+            else:
+                return jsonify({"error": "No se recibió frame de video."}), 400
+        else:
+            frame_data = request.files['frame'].read()
+            # print("Recibido frame como file") # DEBUG
+
+        if not frame_data:
+            return jsonify({"error": "Frame de video vacío."}), 400
+
+        # Guardar el último frame en el buffer
+        with frame_lock:
+            if not latest_frame_buffer.empty():
+                latest_frame_buffer.get_nowait() # Vaciar el buffer si no está vacío
+            latest_frame_buffer.put(frame_data)
+            is_streaming_active = True # Hay frames llegando, el stream está activo
+
+        return jsonify({"message": "Frame recibido."}), 200
+    except Exception as e:
+        app.logger.error(f"Error al recibir frame de stream: {e}")
+        is_streaming_active = False # Si hay un error, el stream podría haberse detenido
+        return jsonify({"error": str(e)}), 500
+
+# ------------------------ FIN API PARA RECIBIR STREAM DE PC ---------------------------
+
+# ------------------------ API PARA RE-TRANSMITIR STREAM A LA APP ------------------------
+@app.route('/api/live_feed', methods=['GET'])
+@jwt_required() # Proteger el stream para usuarios logueados
+def live_feed():
+    def generate():
+        last_frame_time = time.time()
+        no_frame_timeout = 5 # segundos sin frames para considerar stream inactivo
+        while True:
+            current_time = time.time()
+            # Verificar si el stream de la cámara fuente está activo
+            if not is_streaming_active:
+                # Enviar un frame de "no stream" o esperar
+                if current_time - last_frame_time > no_frame_timeout:
+                    print("Stream: No hay frames de la cámara fuente. Enviando frame de espera.")
+                    # Puedes servir una imagen estática de "Stream no disponible" aquí
+                    # Ejemplo: yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + your_static_image_bytes + b'\r\n\r\n')
+                    time.sleep(1) # Pequeña pausa para no saturar
+                    continue
+
+            with frame_lock:
+                if not latest_frame_buffer.empty():
+                    frame = latest_frame_buffer.get()
+                    last_frame_time = current_time # Actualizar tiempo del último frame
+                else:
+                    frame = None # No hay frame nuevo, esperar
+
+            if frame:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+            else:
+                # Si no hay frames, esperar un poco antes de volver a intentar
+                time.sleep(0.05)
+
+    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# ------------------------ FIN API PARA RE-TRANSMITIR STREAM A LA APP --------------------
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
