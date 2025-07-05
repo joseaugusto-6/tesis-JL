@@ -491,7 +491,7 @@ def stream_upload():
                 return jsonify({"error": "No se recibió frame de video."}), 400
         else:
             frame_data = request.files['frame'].read()
-            # print("Recibido frame como file") # DEBUG
+            print("Recibido frame como file") # DEBUG
 
         if not frame_data:
             return jsonify({"error": "Frame de video vacío."}), 400
