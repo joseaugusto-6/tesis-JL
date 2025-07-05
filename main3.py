@@ -496,7 +496,7 @@ def stream_upload():
 
 # ------------------------ API PARA RE-TRANSMITIR STREAM A LA APP ------------------------
 @app.route('/api/live_feed', methods=['GET'])
-@jwt_required() # Proteger el stream para usuarios logueados
+#@jwt_required() # Proteger el stream para usuarios logueados
 def live_feed():
     def generate():
         global is_streaming_active, last_frame_received_time # Asegúrate de que last_frame_received_time es global aquí también
@@ -559,6 +559,12 @@ def live_feed():
     }
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame', headers=headers)
 # ------------------------ FIN API PARA RE-TRANSMITIR STREAM A LA APP --------------------
+
+# ------------------------ RUTA WEB PARA EL STREAM -------------------------------
+@app.route('/live_stream', methods=['GET'])
+def live_stream_web_page():
+    return render_template('live_stream_page.html')
+# ------------------------ FIN RUTA WEB PARA EL STREAM ---------------------------
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)

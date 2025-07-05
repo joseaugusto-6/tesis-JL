@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video en Vivo - Camara de Seguridad</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { background-color: #f0f0f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; }
+        h1 { color: #333; margin-bottom: 20px; }
+        img { border: 1px solid #ccc; max-width: 100%; height: auto; display: block; }
+        .status { margin-top: 10px; font-size: 1.1em; color: #555; }
+        .error { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Video en Vivo</h1>
+    <img id="liveStream" src="/api/live_feed" alt="Video en Vivo">
+    <p class="status">Cargando stream...</p>
+
+    <script>
+        // Script para manejar errores básicos si la imagen no carga
+        document.getElementById('liveStream').onerror = function() {
+            this.alt = 'Stream no disponible. Verifique que la cámara esté activa.';
+            this.style.border = '2px dashed red';
+            document.querySelector('.status').textContent = 'Estado: ¡Error al cargar el stream!';
+            document.querySelector('.status').classList.add('error');
+        };
+        document.getElementById('liveStream').onload = function() {
+            document.querySelector('.status').textContent = 'Estado: Conectado';
+            document.querySelector('.status').classList.remove('error');
+        };
+    </script>
+</body>
+</html>
