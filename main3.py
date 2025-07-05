@@ -5,7 +5,9 @@ from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 import requests # Para hacer peticiones HTTP (a la Cloud Function)
-ARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # GMT-4
+from datetime import datetime, timedelta, timezone
+
+CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # GMT-4
 # Inicializaciones básicas
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'  # Cambia esto por algo más seguro en producción
