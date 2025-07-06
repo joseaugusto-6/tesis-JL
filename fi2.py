@@ -110,7 +110,7 @@ def descargar_embeddings_firebase_for_user(user_email_safe): # Acepta user_email
     # Asegurarse de que la carpeta local esté limpia antes de cada descarga para evitar mezclas
     limpiar_carpeta(CARPETA_LOCAL_EMBEDDINGS) 
 
-    blobs = storage.bucket(name=FIREBASE_INIT_BUCKET_NAME, app=firebase_app_fi).list_blobs(prefix=f"{FIREBASE_PATH_EMBEDDINGS}{user_email_safe}/") 
+    blobs = storage.bucket(name=FIREBASE_STORAGE_BUCKET_NAME, app=firebase_app_fi).list_blobs(prefix=f"{FIREBASE_PATH_EMBEDDINGS}{user_email_safe}/") 
     count = 0
     for blob in blobs:
         if blob.name.endswith('.npy') and not blob.name.endswith('/'):
