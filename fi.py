@@ -9,6 +9,8 @@ import firebase_admin
 from firebase_admin import credentials, storage, messaging 
 from firebase_admin import firestore 
 import threading
+import FaceNet
+import MTCNN
 
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara --
