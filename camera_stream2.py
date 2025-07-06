@@ -39,7 +39,7 @@ FIREBASE_UPLOAD_PATH_CAPTURE_MODE = f"uploads/{CAMERA_ID_PC}/" # <--- Carpeta pa
 # Modos de operación: 'STREAMING_MODE', 'CAPTURE_MODE'
 current_mode = "STREAMING_MODE" # Modo inicial al arrancar
 last_capture_time = time.time() # Para controlar el tiempo entre capturas
-CAPTURE_INTERVAL_SECONDS = 1 # Capturar una imagen cada 5 segundos en CAPTURE_MODE
+CAPTURE_INTERVAL_SECONDS = 10 # Capturar una imagen cada 5 segundos en CAPTURE_MODE
 last_status_publish_time = time.time() # 
 STATUS_PUBLISH_INTERVAL_SECONDS = 30 # Publicar estado cada 30 segundos
 
