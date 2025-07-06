@@ -1,16 +1,19 @@
 import os
+# import io # Eliminado - no usado
 import time
 import cv2
-import numpy as np
-import subprocess # Se mantiene, aunque ahora OpenCV es la fuente de frames
-import paho.mqtt.client as mqtt 
-from datetime import datetime, timezone, timedelta 
-import firebase_admin 
+import numpy as np # Necesario para cv2.imencode y numpy.tobytes
+# import random # Eliminado - no usado
+from datetime import datetime, timezone 
+from mtcnn import MTCNN
+from keras_facenet import FaceNet
+from scipy.spatial.distance import cosine
+import requests 
+import torch 
+
+import firebase_admin
 from firebase_admin import credentials, storage, messaging 
 from firebase_admin import firestore 
-import threading
-import FaceNet
-import MTCNN
 
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara --
