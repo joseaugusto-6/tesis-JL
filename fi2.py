@@ -4,11 +4,12 @@
 fi.py – Worker de SecurityCamApp
 • Descarga cada imagen nueva de Firebase Storage (uploads/).
 • Detecta personas (YOLO) y rostros (MTCNN + FaceNet).
-• Genera notificaciones FCM:
-    – known_person           → título “Persona conocida detectada”
-    – unknown_person         → 1 rostro desconocido
-    – unknown_group          → ≥2 rostros desconocidos
-    – unknown_person_repeat  → rostro desconocido repetido ≥3 veces (cool-down 30 s)
+• Genera notificaciones FCM **y** registra eventos en el backend Flask
+  para que aparezcan en el Historial de la app Flutter.
+    – known_person            → título “Persona conocida detectada”
+    – unknown_person          → 1 rostro desconocido (nueva entrada)
+    – unknown_group           → ≥2 rostros desconocidos (alerta grupal)
+    – unknown_person_repeat   → rostro desconocido repetido ≥3 veces
 • Sube la imagen procesada SOLO si hay evento (carpeta alarmas_procesadas/ o alertas_grupales/).
 • Borra siempre la imagen original de uploads/.
 """
@@ -24,6 +25,7 @@ import torch
 from mtcnn import MTCNN
 from keras_facenet import FaceNet
 
+import requests  #  <-- NUEVO: registrar eventos en backend
 import firebase_admin
 from firebase_admin import credentials, storage, messaging, firestore
 # ---------------------------------
@@ -31,12 +33,15 @@ from firebase_admin import credentials, storage, messaging, firestore
 # ---------- CONFIGURACIÓN GLOBAL ----------
 SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
 PROJECT_ID           = 'security-cam-f322b'
-BUCKET_ID            = f'{PROJECT_ID}.firebasestorage.app'          # bucket público
+BUCKET_ID            = f'{PROJECT_ID}.firebasestorage.app'
 
 PREF_UPLOADS   = 'uploads/'
 PREF_PROCESSED = 'alarmas_procesadas/'
 PREF_GROUPS    = 'alertas_grupales/'
 PREF_EMBEDS    = 'embeddings_clientes/'
+
+# Endpoint del backend Flask (coincide con BASE_URL en ApiService.dart)
+MAIN3_API_BASE_URL   = 'https://tesisdeteccion.ddns.net/api'
 
 # Parámetros IA
 DIST_THRESHOLD     = 0.50   # similaridad para “match”
@@ -70,14 +75,15 @@ NAMES     = yolo.names
 
 
 # ---------- FUNCIONES AUX -----------
+
 def cargar_embeddings() -> tuple[list[np.ndarray], list[str]]:
     """Descarga .npy del bucket y devuelve ([embedding], [label])."""
     embs, labels = [], []
     for blob in bucket.list_blobs(prefix=PREF_EMBEDS):
         if not blob.name.endswith('.npy'):
             continue
-        vec = np.load(io.BytesIO(blob.download_as_bytes()), allow_pickle=True)\
-               .item()
+        vec = np.load(io.BytesIO(blob.download_as_bytes()), allow_pickle=True)
+        vec = vec.item() if isinstance(vec, np.ndarray) else vec
         embs.extend(vec['embeddings'])
         labels.extend([vec['name']] * len(vec['embeddings']))
     print(f"[INFO] Embeddings cargados: {len(embs)}")
@@ -103,14 +109,25 @@ def send_fcm(owner: str, title: str, body: str,
             messaging.send(msg)
     except Exception as e:
         print(f"[WARN] Error FCM: {e}")
+
+
+def registrar_evento(evento: dict):
+    """Envía el evento al backend para Historial."""
+    try:
+        r = requests.post(f"{MAIN3_API_BASE_URL}/events/add", json=evento, timeout=5)
+        if r.status_code not in (200, 201):
+            print(f"[WARN] registrar_evento {r.status_code}: {r.text[:120]}")
+    except Exception as e:
+        print(f"[WARN] registrar_evento error: {e}")
 # ------------------------------------
 
 
 # -------- BUCLE PRINCIPAL ----------
+
 def main():
     last_emb_load = 0
     known_embs, known_labels = [], []
-    history: list[dict] = []        # historial <60 s p/rostros desconocidos
+    history: list[dict] = []  # historial <60 s p/rostros desconocidos
 
     while True:
         now = time.time()
@@ -127,13 +144,13 @@ def main():
             continue
 
         for blob in blobs:
-            nombre   = os.path.basename(blob.name)
-            device_id = nombre.split('_')[0] if '_' in nombre else 'unknown'
-            owner_q   = db.collection('usuarios')\
-                          .where('devices', 'array_contains', device_id)\
+            nombre     = os.path.basename(blob.name)
+            device_id  = nombre.split('_')[0] if '_' in nombre else 'unknown'
+            owner_q    = db.collection('usuarios') \
+                          .where('devices', 'array_contains', device_id) \
                           .limit(1).stream()
-            owner = next(owner_q, None)
-            owner_id = owner.id if owner else None
+            owner      = next(owner_q, None)
+            owner_id   = owner.id if owner else None
             if not owner_id:
                 blob.delete(); continue  # sin dueño -> descartar
 
@@ -194,70 +211,22 @@ def main():
                     known_names.add(name)
 
             # --- decidir eventos ---
-            evento_tipo: str | None = None
-            titulo = cuerpo = ''
+            evento: dict | None = None
             is_group = len(unknowns) >= 2
 
             if known_names:
-                evento_tipo = 'known_person'
                 persona = ', '.join(sorted(known_names))
-                titulo  = 'Persona conocida detectada'
-                cuerpo  = f'{persona} en cámara {device_id}.'
+                evento = {
+                    "person_name": persona,
+                    "timestamp": utc_now.isoformat(),
+                    "event_type": "known_person",
+                    "event_details": f"{persona} en cámara {device_id}.",
+                    "device_id": device_id
+                }
 
             if unknowns and len(unknowns) == 1:
-                evento_tipo = 'unknown_person'
-                titulo, cuerpo = ('Persona desconocida detectada',
-                                  f'Rostro no identificado en {device_id}.')
-            if is_group:
-                evento_tipo = 'unknown_group'
-                titulo, cuerpo = ('¡ALERTA GRUPAL!',
-                                  f'{len(unknowns)} desconocidos en {device_id}.')
-
-            # --- anti-spam rostro repetido ---
-            if evento_tipo == 'unknown_person':
-                emb = unknowns[0]['emb']
-                repetido = False
-                for h in history:
-                    if cosine(emb, h['emb']) < SIM_THRESHOLD:
-                        h['count'] += 1
-                        if (h['count'] >= REPEAT_THRESHOLD and
-                                (utc_now - h['last']).total_seconds() > COOLDOWN_SECONDS):
-                            evento_tipo = 'unknown_person_repeat'
-                            titulo = 'Desconocido recurrente'
-                            cuerpo = (f'Rostro desconocido repetido '
-                                      f'en {device_id}.')
-                            h['last'] = utc_now
-                        repetido = True
-                        break
-                if not repetido:
-                    history.append({'emb': emb, 'count': 1, 'last': utc_now})
-                # limpia historial >60 s
-                history[:] = [h for h in history
-                              if (utc_now - h['last']).total_seconds() < 60]
-
-            # --- subir imagen procesada y notificar ---
-            img_url = None
-            if evento_tipo:
-                ok, buff = cv2.imencode('.jpg', img)
-                if ok:
-                    path_dest = (PREF_GROUPS if is_group else PREF_PROCESSED) \
-                                + nombre.replace('.jpg', '_proc.jpg')
-                    out_blob = bucket.blob(path_dest)
-                    out_blob.upload_from_string(buff.tobytes(),
-                                                content_type='image/jpeg')
-                    out_blob.make_public()
-                    img_url = out_blob.public_url
-
-                send_fcm(owner_id, titulo, cuerpo,
-                         img_url, {"event_type": evento_tipo,
-                                   "device_id": device_id})
-
-            # --- cleanup original ---
-            blob.delete()
-
-        time.sleep(3)
-
-
-# --------------- MAIN ---------------
-if __name__ == "__main__":
-    main()
+                evento = {
+                    "person_name": "Desconocido",
+                    "timestamp": utc_now.isoformat(),
+                    "event_type": "unknown_person",
+                    "event_details": f("Rostro no identificado en {device_id}.") ,
