@@ -143,7 +143,7 @@ def descargar_fotos_firebase():
     print("[INFO] Descargando imágenes de Firebase...")
     limpiar_carpeta(CARPETA_LOCAL_FOTOS)
     # Usamos el bucket_fi global para esta operación
-    blobs = storage.bucket(name=FIREBASE_INIT_BUCKET_NAME, app=firebase_app_fi).list_blobs(prefix=FIREBASE_PATH_FOTOS) 
+    blobs = storage.bucket(name=FIREBASE_STORAGE_BUCKET_NAME, app=firebase_app_fi).list_blobs(prefix=FIREBASE_PATH_FOTOS) 
     imagenes = []
     for blob in blobs:
         if not blob.name.endswith('/') and (blob.name.lower().endswith(('.jpg', '.jpeg', '.png'))):
