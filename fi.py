@@ -10,7 +10,7 @@ from keras_facenet import FaceNet
 from scipy.spatial.distance import cosine
 import requests 
 import torch 
-
+import threading
 import firebase_admin
 from firebase_admin import credentials, storage, messaging 
 from firebase_admin import firestore 
