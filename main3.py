@@ -385,7 +385,7 @@ def get_dashboard_data():
 
     # --- CAMBIO CLAVE AQUÍ: Filtrar por device_id, no por user_email ---
     latest_events_query = db.collection('events') \
-                          .where('device_id', 'in', user_devices) \ 
+                          .where('device_id', 'in', user_devices) \
                           .order_by('timestamp', direction=firestore.Query.DESCENDING) \
                           .limit(5)
 
@@ -408,7 +408,7 @@ def get_dashboard_data():
     today_end = now_caracas.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     today_events_query = db.collection('events') \
-                          .where('device_id', 'in', user_devices) \ 
+                          .where('device_id', 'in', user_devices) \
                           .where('timestamp', '>=', today_start) \
                           .where('timestamp', '<=', today_end)
 
