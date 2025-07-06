@@ -14,6 +14,7 @@ import threading
 import firebase_admin
 from firebase_admin import credentials, storage, messaging 
 from firebase_admin import firestore 
+import paho.mqtt.client as mqtt # <-- ¡Añade esto para MQTT!
 
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara --
