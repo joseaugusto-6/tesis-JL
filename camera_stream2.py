@@ -78,10 +78,12 @@ def on_message(client, userdata, msg):
     print(f"MQTT: Comando recibido en tópico '{msg.topic}': {command}")
 
     if msg.topic == MQTT_COMMAND_TOPIC:
-        if command == "MODE_STREAM":
+        # Convertir a minúsculas y quitar posibles espacios para mayor tolerancia
+        processed_command = command.strip().upper() 
+        if command == "STREAMING_MODE":
             current_mode = "STREAMING_MODE"
             print("Cambiando a: MODO STREAMING")
-        elif command == "MODE_CAPTURE":
+        elif command == "CAPTURE_MODE":
             current_mode = "CAPTURE_MODE"
             print("Cambiando a: MODO CAPTURA DE IMÁGENES")
         else:
