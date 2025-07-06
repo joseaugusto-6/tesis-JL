@@ -11,9 +11,9 @@ from firebase_admin import credentials, storage # Para autenticación y Storage
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara --
 CAMERA_INDEX = 0 + cv2.CAP_DSHOW # Índice de tu cámara + backend que funciona rápido
-CAMERA_RESOLUTION = (640, 480)
+CAMERA_RESOLUTION = (480, 320)
 CAMERA_ID_PC = "camera001"
-CAMERA_FPS = 30 # FPS deseado para stream o captura
+CAMERA_FPS = 10 # FPS deseado para stream o captura
 
 # --- NUEVO: Definir la zona horaria de Caracas ---
 CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # GMT-4 (ejemplo, ajusta si es diferente)
@@ -39,6 +39,7 @@ FIREBASE_UPLOAD_PATH_CAPTURE_MODE = f"uploads/{CAMERA_ID_PC}/" # <--- Carpeta pa
 # Modos de operación: 'STREAMING_MODE', 'CAPTURE_MODE'
 current_mode = "STREAMING_MODE" # Modo inicial al arrancar
 last_capture_time = time.time() # Para controlar el tiempo entre capturas
+
 CAPTURE_INTERVAL_SECONDS = 10 # Capturar una imagen cada 5 segundos en CAPTURE_MODE
 last_status_publish_time = time.time() # 
 STATUS_PUBLISH_INTERVAL_SECONDS = 30 # Publicar estado cada 30 segundos
