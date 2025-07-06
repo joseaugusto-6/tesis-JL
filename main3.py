@@ -1,4 +1,5 @@
 import os
+import re
 from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify, Response
 from google.cloud import storage, firestore
 import paho.mqtt.client as mqtt # <-- ¡Añade esto para MQTT!
@@ -84,30 +85,32 @@ def on_mqtt_message_flask(client, userdata, msg):
     global camera_status # Acceder a la variable global
     topic = msg.topic
     payload = msg.payload.decode("utf-8")
-    print(f"MQTT (Flask): Mensaje recibido en '{topic}': {payload}")
 
     if topic.startswith("camera/status/"):
         camera_id = topic.split('/')[-1]
-        parts = payload.split(";")
 
-        mode_status = "UNKNOWN"
-        power_status = False # Por defecto a False (OFF)
+        # --- INICIO DE LA CORRECCIÓN CON REGEX ---
+        # Usamos regex para extraer los valores de forma segura, ignorando espacios.
+        # r'Modo:\s*([\w_]+)' busca "Modo:", luego cualquier espacio (\s*), y captura el nombre del modo.
+        mode_match = re.search(r'Modo:\s*([\w_]+)', payload)
+        # r'Power:\s*(ON|OFF)' busca "Power:", cualquier espacio, y captura ON u OFF.
+        power_match = re.search(r'Power:\s*(ON|OFF)', payload, re.IGNORECASE) # IGNORECASE por si acaso
 
-        for part in parts:
-            if part.startswith("Modo: "):
-                mode_status = part.replace("Modo: ", "").strip()
-            elif part.startswith("Power: "):
-                power_status_str = part.replace("Power: ", "").strip()
-                power_status = (power_status_str == "ON") # True si es "ON", False si es "OFF"
+        mode_status = mode_match.group(1) if mode_match else "UNKNOWN"
+        power_status_str = power_match.group(1) if power_match else "OFF"
+        
+        # Convertimos el string "ON" a un booleano True.
+        power_status = (power_status_str.upper() == "ON")
+        # --- FIN DE LA CORRECCIÓN ---
 
         with camera_status_lock:
-            # Asegurarse de mantener el modo existente si solo se actualiza el power, o viceversa
             current_cam_status = camera_status.get(camera_id, {})
-            current_cam_status['mode'] = mode_status # Actualizar modo
-            current_cam_status['is_on'] = power_status # <-- ¡NUEVO: Actualizar estado de encendido!
-            current_cam_status['timestamp'] = datetime.now() # Actualizar timestamp
-            camera_status[camera_id] = current_cam_status # Guardar el estado actualizado
+            current_cam_status['mode'] = mode_status
+            current_cam_status['is_on'] = power_status # ¡Ahora con el valor booleano correcto!
+            current_cam_status['timestamp'] = datetime.now()
+            camera_status[camera_id] = current_cam_status
 
+        # Este log ahora debería mostrar "Power: True" cuando corresponda.
         print(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {mode_status}, Power: {power_status}")
 
 flask_mqtt_client.on_connect = on_mqtt_connect_flask
