@@ -56,24 +56,27 @@ for d in [CARPETA_LOCAL_FOTOS, CARPETA_LOCAL_EMBEDDINGS]:
     os.makedirs(d, exist_ok=True)
 
 # ========== INICIALIZACIÓN FIREBASE ADMIN SDK (PARA FI.PY) ==========
-firebase_app_fi = None # Renombrado para evitar conflicto con camera_stream2.py
+firebase_app_fi = None 
+bucket_fi = None 
 try:
-    if not firebase_admin._apps: 
-        cred_fi = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH_PC) # Usar las credenciales de la PC
-        firebase_app_fi = firebase_admin.initialize_app(cred_fi, {'projectId': 'security-cam-f322b', 'storageBucket': FIREBASE_STORAGE_BUCKET_NAME}, name='fi_processor_app')
-    else:
-        # Si ya se inicializó, obtener la instancia existente
+    # Intentar obtener la app si ya existe, si no, inicializar
+    try:
         firebase_app_fi = firebase_admin.get_app(name='fi_processor_app')
+        print("[INFO] Firebase Admin SDK (fi.py) ya inicializado.")
+    except ValueError: # La app no existe, inicializarla
+        cred_fi = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH_PC)
+        firebase_app_fi = firebase_admin.initialize_app(cred_fi, {'projectId': 'security-cam-f322b', 'storageBucket': FIREBASE_STORAGE_BUCKET_NAME}, name='fi_processor_app')
+        print("[INFO] Firebase Admin SDK (fi.py) inicializado correctamente para Storage.")
 
-    bucket_fi = storage.bucket(app=firebase_app_fi) # Bucket para la subida directa
-    print("[INFO] Firebase Admin SDK (fi.py) inicializado correctamente para Storage.")
+    # Asegurarse de que bucket_fi se inicializa con la app correcta
+    bucket_fi = storage.bucket(app=firebase_app_fi) 
+
 except Exception as e:
     print(f"[ERROR] Error al inicializar Firebase Admin SDK (fi.py): {e}")
     print("El procesamiento de IA y subida de imágenes a Storage no funcionará.")
-    # No salir, permitir que al menos la parte de detección de frames siga si puede.
 
 
-# ========== INICIALIZAR MODELOS DE IA ==========
+# ========== INICIALIZAR MODELOS ==========
 embedder = FaceNet()
 detector = MTCNN()
 try:
@@ -142,7 +145,7 @@ def cargar_embeddings_for_user(user_email_safe): # Acepta user_email_safe
 def descargar_fotos_firebase():
     print("[INFO] Descargando imágenes de Firebase...")
     limpiar_carpeta(CARPETA_LOCAL_FOTOS)
-    # Usamos el bucket_fi global para esta operación
+    # Pasa la instancia de la app a storage.bucket() aquí
     blobs = storage.bucket(name=FIREBASE_STORAGE_BUCKET_NAME, app=firebase_app_fi).list_blobs(prefix=FIREBASE_PATH_FOTOS) 
     imagenes = []
     for blob in blobs:
