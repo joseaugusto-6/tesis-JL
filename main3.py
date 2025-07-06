@@ -119,6 +119,51 @@ try:
 except Exception as e:
     print(f"MQTT (Flask): Error al conectar el cliente MQTT: {e}")
 
+def on_message(client, userdata, msg):
+    # Asegúrate que 're' esté importado al principio de tu archivo: import re
+    # Asegúrate que 'datetime' y 'CARACAS_TIMEZONE' sean accesibles globalmente.
+    global camera_status # Acceder a la variable global de estados de cámara
+
+    topic = msg.topic
+    payload = msg.payload.decode('utf-8')
+    app.logger.info(f"MQTT (Flask): Mensaje recibido en '{topic}': {payload}") # Usar app.logger.info
+
+    # Extraer camera_id del tópico
+    match_id = re.match(r'camera/status/(.+)', topic)
+    if not match_id:
+        app.logger.warning(f"MQTT (Flask): Tópico no reconocido para estado de cámara: {topic}")
+        return
+
+    camera_id = match_id.group(1)
+
+    # Extraer Modo y Power del payload usando expresiones regulares
+    mode_match = re.search(r'Modo:\s*(\w+)', payload)
+    power_match = re.search(r'Power:\s*(\w+)', payload)
+
+    new_mode = mode_match.group(1) if mode_match else "UNKNOWN"
+    new_power_str = power_match.group(1) if power_match else None
+    
+    # CORRECCIÓN CLAVE: Parsear 'Power' a booleano de forma robusta
+    new_is_on = (new_power_str.upper() == 'ON') if new_power_str else False 
+
+    with camera_status_lock: # Acceder al candado de la variable global
+        # Si la cámara no existe en el diccionario de estados, inicializarla
+        if camera_id not in camera_status:
+            camera_status[camera_id] = {
+                'mode': 'UNKNOWN',
+                'is_on': False,
+                'timestamp': datetime.now(CARACAS_TIMEZONE),
+                'is_active': False # Inicialmente inactiva
+            }
+        
+        # Actualizar el estado de la cámara
+        camera_status[camera_id]['mode'] = new_mode
+        camera_status[camera_id]['is_on'] = new_is_on
+        camera_status[camera_id]['timestamp'] = datetime.now(CARACAS_TIMEZONE) # Actualizar el timestamp del último reporte
+        camera_status[camera_id]['is_active'] = True # Si recibimos un mensaje, está activa
+
+        app.logger.info(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {camera_status[camera_id]['mode']}, Power: {camera_status[camera_id]['is_on']}, Activa: {camera_status[camera_id]['is_active']}")
+
 # ---------------------- FIRESTORE USUARIOS --------------------------
 def firestore_user_exists(email):
     """Verifica si ya existe un usuario con este email"""
