@@ -4,7 +4,7 @@ import time
 import cv2
 import numpy as np # Necesario para cv2.imencode y numpy.tobytes
 # import random # Eliminado - no usado
-from datetime import datetime, timezone 
+from datetime import datetime, timezone,timedelta 
 from mtcnn import MTCNN
 from keras_facenet import FaceNet
 from scipy.spatial.distance import cosine
