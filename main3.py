@@ -477,7 +477,7 @@ def get_user_devices():
             devices_with_status.append({
                 'id': device_id,
                 'mode': mode,
-                'is_active': status_info is not None and (datetime.now() - status_info['timestamp']).total_seconds() < 60 # Considerar activa si el último reporte es de hace menos de 60s
+                'is_active': status_info is not None and (datetime.now() - status_info['timestamp']).total_seconds() < 60, # Considerar activa si el último reporte es de hace menos de 60s
                 'is_on': status_info['is_on'] if status_info and 'is_on' in status_info else False
             })
 
