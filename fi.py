@@ -26,10 +26,12 @@ CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # Zona horaria para timestamps
 MAIN3_API_BASE_URL = "https://tesisdeteccion.ddns.net/api" # <--- ¡ACTUALIZA ESTO CON TU DOMINIO DDNS!
 # MQTT_BROKER_IP, MQTT_COMMAND_TOPIC, etc. ya no están aquí, pertenecen a camera_stream2.py
 
-# -- Configuración de Firebase Storage (Paths dentro del bucket) --
+# -- Configuración de Firebase Storage --
 FIREBASE_PATH_FOTOS = 'uploads/'             # Carpeta donde camera_stream2.py sube las fotos a procesar
 FIREBASE_PATH_EMBEDDINGS = 'embeddings_clientes/' # Carpeta raíz de embeddings por cliente
 FIREBASE_PATH_ALARMAS = 'alarmas_procesadas/' # Carpeta donde fi.py subirá imágenes procesadas
+FIREBASE_SERVICE_ACCOUNT_PATH = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
+
 
 # -- Rutas Locales (temporales para descarga) --
 CARPETA_LOCAL_FOTOS = '/tmp/fotos/' 
