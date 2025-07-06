@@ -29,9 +29,9 @@ from firebase_admin import credentials, storage, messaging, firestore
 # ---------------------------------
 
 # ---------- CONFIGURACIÓN GLOBAL ----------
-SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk.json'
+SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
 PROJECT_ID           = 'security-cam-f322b'
-BUCKET_ID            = f'{PROJECT_ID}.appspot.com'          # bucket público
+BUCKET_ID            = f'{PROJECT_ID}.firebasestorage.app'          # bucket público
 
 PREF_UPLOADS   = 'uploads/'
 PREF_PROCESSED = 'alarmas_procesadas/'
