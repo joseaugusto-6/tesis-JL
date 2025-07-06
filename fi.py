@@ -1,20 +1,14 @@
 import os
-# import io # Eliminado - no usado
 import time
 import cv2
-import numpy as np # Necesario para cv2.imencode y numpy.tobytes
-# import random # Eliminado - no usado
-from datetime import datetime, timezone,timedelta 
-from mtcnn import MTCNN
-from keras_facenet import FaceNet
-from scipy.spatial.distance import cosine
-import requests 
-import torch 
-import threading
-import firebase_admin
+import numpy as np
+import subprocess 
+import paho.mqtt.client as mqtt 
+from datetime import datetime, timezone, timedelta 
+import firebase_admin 
 from firebase_admin import credentials, storage, messaging 
 from firebase_admin import firestore 
-import paho.mqtt.client as mqtt # <-- ¡Añade esto para MQTT!
+import threading # Necesario para threading.Lock()
 
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara --
@@ -23,11 +17,11 @@ CAMERA_RESOLUTION = (640, 480)
 CAMERA_ID_PC = "camera001"
 CAMERA_FPS = 30 
 
-# --- NUEVO: Definir la zona horaria de Caracas ---
+# --- Definir la zona horaria de Caracas ---
 CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) 
 
 # -- Configuración MQTT --
-MQTT_BROKER_IP = "34.69.206.32" 
+MQTT_BROKER_IP = "34.69.206.32" # <--- ¡ACTUALIZA ESTO con la IP pública de tu VM!
 MQTT_BROKER_PORT = 1883
 MQTT_CLIENT_ID = "camera_pc_client" 
 MQTT_COMMAND_TOPIC = f"camera/commands/{CAMERA_ID_PC}" 
@@ -35,29 +29,27 @@ MQTT_STATUS_TOPIC = f"camera/status/{CAMERA_ID_PC}"
 MQTT_QOS = 1 
 
 # -- Configuración de la VM (main3.py) --
-VM_STREAM_UPLOAD_URL = "https://tesisdeteccion.ddns.net/api/stream_upload" 
+VM_STREAM_UPLOAD_URL = "https://tesisdeteccion.ddns.net/api/stream_upload" # <--- ¡ACTUALIZA ESTO!
 
 # -- Configuración de Firebase Storage para subida directa (Modo Captura) --
-FIREBASE_SERVICE_ACCOUNT_PATH_PC = "D:/TESIS/AAA THE LAST DANCE/security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json"
+FIREBASE_SERVICE_ACCOUNT_PATH_PC = "D:/TESIS/AAA THE LAST DANCE/security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json" # <--- ¡ACTUALIZA ESTO!
 FIREBASE_STORAGE_BUCKET_NAME = "security-cam-f322b.firebasestorage.app" 
 FIREBASE_UPLOAD_PATH_CAPTURE_MODE = f"uploads/{CAMERA_ID_PC}/" 
 
 # ========== VARIABLES DE ESTADO ==========
-# Modos de operación: 'STREAMING_MODE', 'CAPTURE_MODE'
 current_mode = "STREAMING_MODE" 
 last_capture_time = time.time() 
 CAPTURE_INTERVAL_SECONDS = 5 
-last_status_publish_time = time.time() # Para control de publicación de estado periódico
-STATUS_PUBLISH_INTERVAL_SECONDS = 30 # Publicar estado cada 30 segundos
+last_status_publish_time = time.time() 
+STATUS_PUBLISH_INTERVAL_SECONDS = 30 
 
 # Cache para embeddings por usuario: { "user_email_safe": {"embeddings": [], "labels": [], "timestamp": <last_load_time>} }
 user_embeddings_cache = {}
-embeddings_cache_lock = threading.Lock() # Para proteger el acceso al caché
+embeddings_cache_lock = threading.Lock() 
 
-
-# ========== INICIALIZACIÓN FIREBASE ==========
+# ========== INICIALIZACIÓN FIREBASE ADMIN SDK (PARA SUBIR A STORAGE) ==========
 firebase_app_pc = None
-bucket_pc = None # Inicializar bucket_pc fuera del try/except
+bucket_pc = None 
 try:
     if not firebase_admin._apps: 
         cred_pc = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH_PC)
@@ -103,13 +95,10 @@ def limpiar_carpeta(path):
             print(f"Error al limpiar {os.path.join(path, f)}: {e}")
 
 # ========== GESTIÓN DE EMBEDDINGS (Ahora con filtro por usuario) ==========
-def descargar_embeddings_firebase_for_user(user_email_safe): # Acepta user_email_safe
+def descargar_embeddings_firebase_for_user(user_email_safe):
     print(f"[INFO] Descargando embeddings de Firebase para {user_email_safe}...")
-    
-    # Asegurarse de que la carpeta local esté limpia antes de cada descarga para evitar mezclas
     limpiar_carpeta(CARPETA_LOCAL_EMBEDDINGS) 
 
-    # Listar blobs solo para el email del usuario específico
     blobs = storage.bucket(name=FIREBASE_INIT_BUCKET_NAME, app=firebase_app_pc).list_blobs(prefix=f"{FIREBASE_PATH_EMBEDDINGS}{user_email_safe}/") 
     count = 0
     for blob in blobs:
@@ -122,10 +111,9 @@ def descargar_embeddings_firebase_for_user(user_email_safe): # Acepta user_email
                 print(f"Error al descargar {blob.name}: {e}")
     print(f"[INFO] ¡Descarga de embeddings terminada! ({count} archivos para {user_email_safe})")
 
-def cargar_embeddings_for_user(user_email_safe): # Acepta user_email_safe
+def cargar_embeddings_for_user(user_email_safe):
     known_embeddings = []
     known_labels = []
-    # Solo cargar los embeddings que acabamos de descargar para este usuario
     for file in os.listdir(CARPETA_LOCAL_EMBEDDINGS):
         if file.endswith('.npy'):
             try:
@@ -143,7 +131,7 @@ def cargar_embeddings_for_user(user_email_safe): # Acepta user_email_safe
 def descargar_fotos_firebase():
     print("[INFO] Descargando imágenes de Firebase...")
     limpiar_carpeta(CARPETA_LOCAL_FOTOS)
-    blobs = bucket.list_blobs(prefix=FIREBASE_PATH_FOTOS) # Usamos el bucket_pc global para esta operación
+    blobs = storage.bucket(name=FIREBASE_INIT_BUCKET_NAME, app=firebase_app_pc).list_blobs(prefix=FIREBASE_PATH_FOTOS) 
     imagenes = []
     for blob in blobs:
         if not blob.name.endswith('/') and (blob.name.lower().endswith(('.jpg', '.jpeg', '.png'))):
@@ -229,36 +217,94 @@ def get_user_email_by_device_id(device_id):
         print(f"Error al buscar usuario por device_id {device_id}: {e}")
         return None
 
+# ========== FUNCIÓN DE CALLBACK MQTT (para fi.py) ==========
+def on_connect(client_mqtt_instance, userdata, flags, rc): # Argumento renombrado para evitar conflicto
+    if rc == 0:
+        print(f"MQTT: Conectado al broker {MQTT_BROKER_IP}:{MQTT_BROKER_PORT}")
+        client_mqtt_instance.subscribe(MQTT_COMMAND_TOPIC, MQTT_QOS)
+        print(f"MQTT: Suscrito a tópico de comandos: {MQTT_COMMAND_TOPIC}")
+        # Enviar el estado inicial al conectarse
+        client_mqtt_instance.publish(MQTT_STATUS_TOPIC, payload=f"Modo: {current_mode}", qos=MQTT_QOS, retain=True)
+        print(f"MQTT: Estado inicial publicado: {current_mode}")
+    else:
+        print(f"MQTT: Falló la conexión, código de retorno {rc}\n")
+
+def on_message(client_mqtt_instance, userdata, msg): # Argumento renombrado
+    global current_mode 
+    command = msg.payload.decode("utf-8")
+    print(f"MQTT: Comando recibido en tópico '{msg.topic}': {command}")
+
+    if msg.topic == MQTT_COMMAND_TOPIC:
+        processed_command = command.strip().upper() 
+
+        if processed_command == "MODE_STREAM" or processed_command == "STREAM":
+            current_mode = "STREAMING_MODE"
+            print("Cambiando a: MODO STREAMING")
+        elif processed_command == "MODE_CAPTURE" or processed_command == "CAPTURE":
+            current_mode = "CAPTURE_MODE"
+            print("Cambiando a: MODO CAPTURA DE IMÁGENES")
+        else:
+            print(f"Comando desconocido: {command}")
+        
+        client_mqtt_instance.publish(MQTT_STATUS_TOPIC, payload=f"Modo: {current_mode}", qos=MQTT_QOS, retain=True)
+
 # ========== PROCESAMIENTO PRINCIPAL ==========
 def procesar_imagenes():
-    global user_embeddings_cache, embeddings_cache_lock # Acceder a las globales del caché
+    global user_embeddings_cache, embeddings_cache_lock 
     historial_desconocidos = []
     persona_sin_rostro_contador = 0
     last_group_alert_time = None
-    # last_embeddings_download = 0 # Ya no es necesaria por el caché por usuario
     embeddings_update_interval = 600 
     
-    # Inicializar estas variables aquí o asegurarse de que siempre se inicializan antes de usarse.
     # known_embeddings, known_labels se cargarán por usuario.
 
-    client_mqtt = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
-    client_mqtt.on_connect = on_connect # Definida globalmente
-    client_mqtt.on_message = on_message # Definida globalmente
+    # Inicializar el cliente MQTT para este bucle de procesamiento
+    # La instancia del cliente se pasa a las funciones de callback, no es global aquí.
+    # Pero el bucle principal necesita acceder a ella.
+    # CORRECCIÓN: El cliente MQTT se inicializa en main() y se pasa a camera_operation_loop.
+    # Aquí en procesar_imagenes, no necesitamos un cliente MQTT.
+    
+    # VERIFICAR QUE SE INICIALIZA EL CLIENTE MQTT EN main() Y SE PASA A ESTA FUNCIÓN
+    # Si esta función se llama directamente, necesitaría el cliente MQTT.
+    # Si esta función es el cuerpo del bucle main (que es lo que el usuario tiene),
+    # entonces el cliente está en un ámbito superior.
 
-    try:
-        client_mqtt.connect(MQTT_BROKER_IP, MQTT_BROKER_PORT, 60)
-        client_mqtt.loop_start() 
-        print("MQTT: Cliente iniciado en un hilo separado para fi.py.")
-    except Exception as e:
-        print(f"MQTT: Error al conectar el cliente MQTT de fi.py: {e}")
-        print("El procesamiento de comandos MQTT no funcionará.")
+    # REVISIÓN: El cliente MQTT se inicializa en main() y camera_operation_loop() es el que lo usa.
+    # procesar_imagenes() NO debería tener código MQTT.
+
+    # Vuelvo al código anterior donde procesar_imagenes NO tenía código MQTT.
+    # El usuario me dio un código de fi.py que mezclaba el init de mqtt dentro de procesar_imagenes.
+    # ME VOY A BASAR EN LA ÚLTIMA VERSIÓN CORRECTA QUE LE DI DE fi.py, QUE SE LLAMA main() Y LLAMA A procesar_imagenes()
+
+    # OK, la estructura correcta de fi.py (camera_stream2.py) es que main() maneja el MQTT client,
+    # y camera_operation_loop() es el que lo recibe como argumento.
+    # procesar_imagenes() NO tiene el cliente MQTT.
+
+    # Reviso el código del usuario de fi.py que me dio para copiar:
+    # Tiene procesar_imagenes() como la función principal
+    # Y client_mqtt = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
+    # y client_mqtt.on_connect = on_connect
+    # ...
+    # Y client_mqtt.loop_start() DENTRO DE procesar_imagenes().
+
+    # ESTA ES LA CAUSA DEL PROBLEMA. processar_imagenes NO ES EL BUCLE PRINCIPAL DE MQTT.
+    # Esto es una mezcla de las dos lógicas.
+
+    # La estructura de `fi.py` debe ser:
+    # main() {
+    #   init MQTT client
+    #   start MQTT loop
+    #   start processing loop (procesar_imagenes)
+    # }
+
+    # Vamos a proporcionar la estructura correcta de fi.py que separa el cliente MQTT de la lógica de procesado de imágenes.
+
+    print("--- (Inicio del bucle de procesamiento de imágenes) ---") # Esto solo es un marcador
+
+    known_embeddings = [] # Se inicializará por usuario
+    known_labels = [] # Se inicializará por usuario
 
     while True:
-        # now_ts = time.time() # Ya no es necesaria por el caché por usuario
-        # if now_ts - last_embeddings_download > embeddings_update_interval or not known_embeddings:
-        #    # Esta lógica de recarga global de embeddings ha sido reemplazada por caché por usuario.
-        #    pass 
-
         imagenes = descargar_fotos_firebase() # Descargar fotos de 'uploads/'
         if not imagenes:
             print("No hay imágenes nuevas para procesar.")
@@ -287,9 +333,7 @@ def procesar_imagenes():
             
             # --- Carga y Cache de Embeddings por Usuario ---
             user_email_safe = "".join([c for c in owner_email if c.isalnum() or c in ('_', '-')]) 
-            known_embeddings = [] # Inicializar para el scope
-            known_labels = [] # Inicializar para el scope
-
+            
             with embeddings_cache_lock:
                 if user_email_safe in user_embeddings_cache and \
                    (time.time() - user_embeddings_cache[user_email_safe]['timestamp']) < 3600: # 1 hora de caché
@@ -299,8 +343,8 @@ def procesar_imagenes():
                     print(f"[INFO] Embeddings cargados desde caché para {owner_email}.")
                 else:
                     print(f"[INFO] Embeddings no encontrados en caché o expirados para {owner_email}. Descargando y cargando.")
-                    descargar_embeddings_firebase_for_user(user_email_safe) # Llamada a la función de descarga por usuario
-                    known_embeddings, known_labels = cargar_embeddings_for_user(user_email_safe) # Llamada a la función de carga por usuario
+                    descargar_embeddings_firebase_for_user(user_email_safe) 
+                    known_embeddings, known_labels = cargar_embeddings_for_user(user_email_safe) 
                     
                     # Almacenar en caché
                     user_embeddings_cache[user_email_safe] = {
@@ -311,7 +355,6 @@ def procesar_imagenes():
                     print(f"[INFO] Embeddings cargados y cacheados para {owner_email}.")
             # --- FIN Carga y Cache de Embeddings por Usuario ---
 
-            # Si no hay embeddings para el usuario, omitir procesamiento facial
             if not known_embeddings:
                 print(f"[INFO] No hay embeddings disponibles para el usuario {owner_email}. Omitiendo reconocimiento facial.")
                 try:
@@ -405,7 +448,7 @@ def procesar_imagenes():
                 _, img_encoded = cv2.imencode('.jpg', img_result)
                 img_bytes = img_encoded.tobytes()
 
-                blob_processed = bucket.blob(FIREBASE_PATH_ALARMAS + nombre_archivo.replace('.jpg', '_processed.jpg')) # Usar nombre_archivo
+                blob_processed = bucket.blob(FIREBASE_PATH_ALARMAS + nombre_archivo.replace('.jpg', '_processed.jpg')) 
                 blob_processed.upload_from_string(img_bytes, content_type='image/jpeg') 
                 blob_processed.make_public() 
                 image_public_url = blob_processed.public_url
@@ -421,7 +464,7 @@ def procesar_imagenes():
                         "event_details": f"Detección de {nombre_conocido}",
                         "device_id": device_id
                     }
-                    enviar_evento_a_main3(event_data) # Enviar a la API de historial
+                    enviar_evento_a_main3(event_data) 
                     send_fcm_notification_direct( 
                         owner_email,
                         "Persona Conocida Detectada",
