@@ -38,7 +38,7 @@ MQTT_QOS = 1
 MAIN3_API_BASE_URL = "https://tesisdeteccion.ddns.net/api" # <--- ¡ACTUALIZA ESTO CON TU DOMINIO DDNS!
 
 # -- Configuración de Firebase Storage para subida directa (Modo Captura) --
-FIREBASE_SERVICE_ACCOUNT_PATH_PC = "D:/TESIS/AAA THE LAST DANCE/security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json" # <--- ¡ACTUALIZA ESTO!
+FIREBASE_SERVICE_ACCOUNT_PATH_PC = "security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json" # <--- ¡ACTUALIZA ESTO!
 FIREBASE_STORAGE_BUCKET_NAME = "security-cam-f322b.firebasestorage.app" 
 FIREBASE_UPLOAD_PATH_CAPTURE_MODE = f"uploads/{CAMERA_ID_PC}/" # Carpeta donde camera_stream2.py sube las fotos.
 
