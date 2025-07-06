@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fi.py – Worker de SecurityCamApp (texto blanco con borde negro)
----------------------------------------------------------------
-• Misma lógica de siempre.
-• Cuadro amarillo de YOLO sin texto.
-• Nombres sobre rostros: blanco con contorno negro (sin fondo).
+fi.py – Worker de SecurityCamApp
+• Mismos umbrales, rutas y lógica que acordamos.
+• Marco verde = conocido, rojo = desconocido.
+• Texto SIEMPRE blanco con borde negro, desplazado a la esquina sup-izq.
 """
 
 # ======== IMPORTS ========
@@ -159,6 +158,7 @@ def main():
             # --- Rostros ---
             faces = detector.detect_faces(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
             unknowns, known_set = [], set()
+            labels_corner = []         # ← nombres a mostrar en la esquina
 
             for f in faces:
                 x,y,w,h = [abs(int(v)) for v in f['box']]
@@ -177,13 +177,22 @@ def main():
                             break
 
                 color = (0,255,0) if name!='Desconocido' else (0,0,255)
-                cv2.rectangle(img, (x, y), (x+w, y+h), color, 2)   # ← marco verde/rojo
-                put_text_outline(img, name, x, y-5)                # ← texto SIEMPRE blanco
+                cv2.rectangle(img,(x,y),(x+w,y+h),color,2)
+
+                # Guardar etiqueta para la esquina
+                labels_corner.append(name)
+
                 if name=='Desconocido':
                     if any(px<x<px+pw and py<y<py+ph for px,py,pw,ph in personas):
                         unknowns.append({'emb': emb})
                 else:
                     known_set.add(name)
+
+            # --- Dibujar etiquetas en esquina sup-izq ---
+            y_offset = 20
+            for lbl in labels_corner:
+                put_text_outline(img, lbl, 10, y_offset)
+                y_offset += 18
 
             # --- Reglas de evento (sin cambios) ---
             evento, title, body = None, '', ''
