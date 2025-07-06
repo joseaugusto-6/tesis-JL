@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fi.py – Worker de SecurityCamApp (texto con borde, sin etiqueta “Persona”)
--------------------------------------------------------------------------
-• Misma lógica y variables que tu versión anterior.
-• Rostros: texto blanco con borde negro (sin fondo).
-• Cuadro amarillo de YOLO: se dibuja solo el rectángulo, sin texto.
+fi.py – Worker de SecurityCamApp (texto blanco con borde negro)
+---------------------------------------------------------------
+• Misma lógica de siempre.
+• Cuadro amarillo de YOLO sin texto.
+• Nombres sobre rostros: blanco con contorno negro (sin fondo).
 """
 
 # ======== IMPORTS ========
@@ -66,7 +66,7 @@ NAMES    = yolo.names
 def put_text_outline(img, text, x, y,
                      text_color=(255,255,255), outline=(0,0,0),
                      font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.5, thickness=1):
-    """Texto con borde negro para mayor legibilidad (sin fondo)."""
+    """Texto blanco con borde negro, sin fondo."""
     for dx in (-1, 1):
         for dy in (-1, 1):
             cv2.putText(img, text, (x+dx, y+dy), font,
@@ -176,17 +176,16 @@ def main():
                             name = kn
                             break
 
-                color = (0,255,0) if name!='Desconocido' else (0,0,255)
-                cv2.rectangle(img,(x,y),(x+w,y+h),color,2)
-                put_text_outline(img, name, x, y-5, text_color=color)
-
+                 color = (0,255,0) if name!='Desconocido' else (0,0,255)
+                cv2.rectangle(img, (x, y), (x+w, y+h), color, 2)   # ← marco verde/rojo
+                put_text_outline(img, name, x, y-5)                # ← texto SIEMPRE blanco
                 if name=='Desconocido':
                     if any(px<x<px+pw and py<y<py+ph for px,py,pw,ph in personas):
                         unknowns.append({'emb': emb})
                 else:
                     known_set.add(name)
 
-            # --- Reglas de evento ---
+            # --- Reglas de evento (sin cambios) ---
             evento, title, body = None, '', ''
             is_group = len(unknowns) >= 2
 
@@ -208,7 +207,6 @@ def main():
                 evento = {'person_name': 'Desconocidos (Grupo)',
                           'event_type': 'unknown_group'}
 
-            # --- Repetición de desconocido ---
             if evento and evento['event_type']=='unknown_person':
                 emb = unknowns[0]['emb']
                 rep=False
@@ -228,7 +226,7 @@ def main():
                 history[:] = [h for h in history
                               if (utc_now-h['last']).total_seconds()<60]
 
-            # --- Subir imagen procesada & notificar ---
+            # --- Subir img & notificar (sin cambios) ---
             img_url=None
             if evento:
                 ok,buff = cv2.imencode('.jpg', img)
