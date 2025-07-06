@@ -69,33 +69,33 @@ except Exception as e:
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print(f"MQTT: Conectado al broker {MQTT_BROKER_IP}:{MQTT_BROKER_PORT}")
-        client.subscribe(MQTT_COMMAND_TOPIC, MQTT_QOS)
-        print(f"MQTT: Suscrito a tópico de comandos: {MQTT_COMMAND_TOPIC}")
+        client.subscribe(MQTT_COMMAND_TOPIC, MQTT_QOS) # Suscrito a comandos de modo
+        client.subscribe(f"camera/power/{CAMERA_ID_PC}", MQTT_QOS) # <--- Suscrito a comandos de encendido/apagado
+        print(f"MQTT: Suscrito a tópicos de comandos: {MQTT_COMMAND_TOPIC} y camera/power/{CAMERA_ID_PC}")
         # Enviar el estado inicial al conectarse
-        client.publish(MQTT_STATUS_TOPIC, payload=f"Modo: {current_mode}", qos=MQTT_QOS, retain=True)
-        print(f"MQTT: Estado inicial publicado: {current_mode}")
+        status_payload = f"Modo: {current_mode}; Power: {'ON' if is_camera_on else 'OFF'}"
+        client.publish(MQTT_STATUS_TOPIC, payload=status_payload, qos=MQTT_QOS, retain=True)
+        print(f"MQTT: Estado inicial publicado: {status_payload}")
     else:
         print(f"MQTT: Falló la conexión, código de retorno {rc}\n")
-
 def on_message(client, userdata, msg):
-    global current_mode # Para modificar la variable global
+    global current_mode, is_camera_on # Para modificar la variable global
     command = msg.payload.decode("utf-8")
     print(f"MQTT: Comando recibido en tópico '{msg.topic}': {command}")
+    print(f"DEBUG: is_camera_on ANTES del comando: {is_camera_on}") # DEBUG
 
-    if msg.topic == MQTT_COMMAND_TOPIC:
-        # Convertir a minúsculas y quitar posibles espacios para mayor tolerancia
+    if msg.topic == MQTT_COMMAND_TOPIC: # Comando de modo
         processed_command = command.strip().upper() 
-        
-        if command == "STREAMING_MODE":
+        if processed_command == "MODE_STREAM" or processed_command == "STREAM":
             current_mode = "STREAMING_MODE"
             print("Cambiando a: MODO STREAMING")
-        elif command == "CAPTURE_MODE":
+        elif processed_command == "MODE_CAPTURE" or processed_command == "CAPTURE":
             current_mode = "CAPTURE_MODE"
             print("Cambiando a: MODO CAPTURA DE IMÁGENES")
         else:
-            print(f"Comando desconocido: {command}")
-
-    elif msg.topic == f"camera/power/{CAMERA_ID_PC}": 
+            print(f"Comando de modo desconocido: {command}")
+        
+    elif msg.topic == f"camera/power/{CAMERA_ID_PC}": # Comando de encendido/apagado
         power_command = command.strip().upper()
         if power_command == "ON":
             is_camera_on = True
@@ -105,9 +105,12 @@ def on_message(client, userdata, msg):
             print("Cámara: APAGANDO...")
         else:
             print(f"Comando de encendido/apagado desconocido: {command}")
+    
+    status_payload = f"Modo: {current_mode}; Power: {'ON' if is_camera_on else 'OFF'}"
+    client.publish(MQTT_STATUS_TOPIC, payload=status_payload, qos=MQTT_QOS, retain=True)
+    print(f"DEBUG: is_camera_on DESPUÉS del comando: {is_camera_on}") # DEBUG
 
-        # Publicar el nuevo estado
-        client.publish(MQTT_STATUS_TOPIC, payload=f"Modo: {current_mode}", qos=MQTT_QOS, retain=True)
+
 
 # ========== FUNCIÓN PARA SUBIR IMAGEN A FIREBASE STORAGE ==========
 def upload_image_to_firebase_storage(image_bytes):
@@ -124,30 +127,38 @@ def upload_image_to_firebase_storage(image_bytes):
 
 # ========== FUNCIÓN PRINCIPAL DE OPERACIÓN DE CÁMARA ==========
 def camera_operation_loop(mqtt_client): 
-    global last_capture_time, current_mode, last_status_publish_time 
-    camera = cv2.VideoCapture(CAMERA_INDEX) 
+    global last_capture_time, current_mode, last_status_publish_time, is_camera_on 
+    camera = None # Inicializar cámara a None
 
     try:
-        if not camera.isOpened():
-            print("Error: No se pudo abrir la cámara. Asegúrate de que no esté en uso por otra aplicación.")
-            return 
-
-        print(f"Cámara abierta correctamente. Iniciando operación en {current_mode}.")
-
+        # Bucle principal de operación
         while True:
-            # Publicar el estado COMPLETO periódicamente (modo + encendido)
             current_time = time.time()
-            if (current_time - last_status_publish_time) >= STATUS_PUBLISH_INTERVAL_SECONDS:
-                status_payload = f"Modo: {current_mode}; Power: {'ON' if is_camera_on else 'OFF'}" # <-- Payload completo
-                mqtt_client.publish(MQTT_STATUS_TOPIC, payload=status_payload, qos=MQTT_QOS, retain=True) 
-                print(f"MQTT: Estado periódico publicado: {status_payload}")
-                last_status_publish_time = current_time 
 
-            if is_camera_on: # <-- ¡Solo operar la cámara si está encendida!
+            # --- Gestión del estado de encendido/apagado de la cámara ---
+            if is_camera_on:
+                if camera is None or not camera.isOpened():
+                    print("Cámara: Intentando ENCENDER y abrir la cámara...")
+                    camera = cv2.VideoCapture(CAMERA_INDEX)
+                    if not camera.isOpened():
+                        print("Error: Falló al abrir la cámara. Reintentando...")
+                        time.sleep(1) # Espera antes de reintentar abrir
+                        continue # Volver a intentar abrir
+                    print("Cámara: Abierta correctamente.")
+                    # Publicar estado ON al encender
+                    status_payload = f"Modo: {current_mode}; Power: ON"
+                    mqtt_client.publish(MQTT_STATUS_TOPIC, payload=status_payload, qos=MQTT_QOS, retain=True)
+                    print(f"MQTT: Estado de encendido publicado: {status_payload}")
+
+                # --- Lógica de Modos (STREAMING_MODE / CAPTURE_MODE) ---
                 success, frame = camera.read()
                 if not success:
-                    print("Error: No se pudo leer el frame de la cámara. El bucle se detendrá.")
-                    break 
+                    print("Error: No se pudo leer el frame de la cámara. El stream se detendrá.")
+                    # Intentar cerrar y reabrir si falla la lectura
+                    if camera.isOpened(): camera.release()
+                    camera = None
+                    time.sleep(1)
+                    continue 
 
                 ret, buffer = cv2.imencode('.jpg', frame)
                 if not ret:
@@ -156,7 +167,6 @@ def camera_operation_loop(mqtt_client):
 
                 jpeg_bytes = buffer.tobytes()
 
-                # --- Lógica de Modos ---
                 if current_mode == "STREAMING_MODE":
                     try:
                         response = requests.post(
@@ -165,30 +175,41 @@ def camera_operation_loop(mqtt_client):
                             data={'camera_id': CAMERA_ID_PC} 
                         )
                         response.raise_for_status() 
+                        # print(f"Streaming: Frame enviado a VM. Respuesta: {response.status_code}")
                     except requests.exceptions.RequestException as req_e:
                         print(f"❌ Streaming: Error al enviar frame a VM: {req_e}")
                     time.sleep(1.0 / CAMERA_FPS) 
 
                 elif current_mode == "CAPTURE_MODE":
-                    current_time = time.time()
                     if (current_time - last_capture_time) >= CAPTURE_INTERVAL_SECONDS:
                         print(f"Captura: Capturando y subiendo imagen. Modo: {current_mode}.")
-                        upload_image_to_firebase_storage(jpeg_bytes)
+                        upload_image_to_firebase_storage(jpeg_bytes) # Subir la imagen a Storage
                         last_capture_time = current_time 
                     time.sleep(0.1) 
 
-                else:
+                else: # Modo desconocido
                     print(f"Modo desconocido '{current_mode}'. Default a MODO STREAMING.")
                     current_mode = "STREAMING_MODE"
                     time.sleep(0.1)
-            else:
-                # Si la cámara está OFF, no leemos frames, solo esperamos
-                print("Cámara APAGADA. Esperando comando ON.")
-                time.sleep(1) # Pequeña pausa para no saturar CPU
-                # Si la cámara estaba abierta, liberarla para que no consuma recursos
+            else: # is_camera_on es False (Cámara APAGADA)
                 if camera is not None and camera.isOpened():
-                    camera.release()
+                    print("Cámara: APAGANDO y liberando recursos...")
+                    camera.release() 
                     camera = None # Marcar como cerrada
+                    # Publicar estado OFF al apagar
+                    status_payload = f"Modo: {current_mode}; Power: OFF"
+                    mqtt_client.publish(MQTT_STATUS_TOPIC, payload=status_payload, qos=MQTT_QOS, retain=True)
+                    print(f"MQTT: Estado de encendido publicado: {status_payload}")
+                print("Cámara APAGADA. Esperando comando ON.")
+                time.sleep(5) # Pausa para no saturar CPU mientras espera encendido
+
+            # --- Lógica de Publicación Periódica de Estado (Fuera del IF is_camera_on) ---
+            # Se publica si la cámara está ON o si está OFF, para que el estado se actualice
+            if (current_time - last_status_publish_time) >= STATUS_PUBLISH_INTERVAL_SECONDS:
+                status_payload = f"Modo: {current_mode}; Power: {'ON' if is_camera_on else 'OFF'}" 
+                mqtt_client.publish(MQTT_STATUS_TOPIC, payload=status_payload, qos=MQTT_QOS, retain=True) 
+                print(f"MQTT: Estado periódico publicado: {status_payload}")
+                last_status_publish_time = current_time 
 
     except Exception as e:
         print(f"Error general en camera_operation_loop: {e}")
@@ -200,6 +221,7 @@ def camera_operation_loop(mqtt_client):
             print("Cámara liberada.")
         else:
             print("La cámara no se había abierto o ya estaba liberada.")
+
 
 # ========== FUNCIÓN DE INICIO ==========
 def main():

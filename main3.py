@@ -84,7 +84,6 @@ def on_mqtt_message_flask(client, userdata, msg):
     global camera_status # Acceder a la variable global
     topic = msg.topic
     payload = msg.payload.decode("utf-8")
-    print(f"MQTT (Flask): Mensaje recibido en '{topic}': {payload}")
 
     if topic.startswith("camera/status/"):
         camera_id = topic.split('/')[-1]
