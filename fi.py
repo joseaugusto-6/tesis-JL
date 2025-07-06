@@ -30,7 +30,7 @@ MAIN3_API_BASE_URL = "https://tesisdeteccion.ddns.net/api" # <--- ¡ACTUALIZA ES
 FIREBASE_PATH_FOTOS = 'uploads/'             # Carpeta donde camera_stream2.py sube las fotos a procesar
 FIREBASE_PATH_EMBEDDINGS = 'embeddings_clientes/' # Carpeta raíz de embeddings por cliente
 FIREBASE_PATH_ALARMAS = 'alarmas_procesadas/' # Carpeta donde fi.py subirá imágenes procesadas
-FIREBASE_SERVICE_ACCOUNT_PATH = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
+FIREBASE_SERVICE_ACCOUNT_PATH_PC = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
 
 
 # -- Rutas Locales (temporales para descarga) --
