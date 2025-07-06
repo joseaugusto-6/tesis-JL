@@ -19,18 +19,18 @@ import torch
 
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara (referencia para ID, fi.py no controla la cámara) --
-CAMERA_ID_PC = "camera001" # ID de la cámara que este fi.py procesa por defecto (si no se extrae del nombre)
+CAMERA_ID_PC = "camera001" # <--- ¡ACTUALIZA ESTO CON EL ID DE CÁMARA REAL!
 CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # Zona horaria para timestamps
 
 # -- Rutas de Endpoints y Tópicos (si fi.py los usara, aquí como referencia) --
 MAIN3_API_BASE_URL = "https://tesisdeteccion.ddns.net/api" # <--- ¡ACTUALIZA ESTO CON TU DOMINIO DDNS!
 
 # -- Configuración de Firebase Storage (Paths dentro del bucket) --
-FIREBASE_SERVICE_ACCOUNT_PATH_PC = "/home/jarrprinmunk2002/tesis-JL/security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json" # <--- ¡ACTUALIZA ESTO con la ruta en tu VM!
+FIREBASE_SERVICE_ACCOUNT_PATH_PC = "/home/jarrprinmunk2002/tesis-JL/security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json" # <--- ¡ACTUALIZA ESTO con la ruta ABSOLUTA en tu VM!
 FIREBASE_STORAGE_BUCKET_NAME = "security-cam-f322b.firebasestorage.app" 
 FIREBASE_UPLOAD_PATH_CAPTURE_MODE = f"uploads/{CAMERA_ID_PC}/" # Carpeta donde camera_stream2.py sube las fotos a procesar
 
-# ========== VARIABLES DE ESTADO LOCAL DE PROCESAMIENTO ==========
+# ========== VARIABLES DE ESTADO DE PROCESAMIENTO ==========
 user_embeddings_cache = {}
 embeddings_cache_lock = threading.Lock() # Candado para proteger el caché
 
@@ -135,7 +135,7 @@ def cargar_embeddings_for_user(user_email_safe):
     print(f"Etiquetas de conocidos para {user_email_safe}: {set(known_labels)}")
     return known_embeddings, known_labels
 
-# ========== GESTIÓN DE FOTOS A PROCESAR (desde la carpeta de uploads de Storage) ==========
+# ========== GESTIÓN DE FOTOS A PROCESAR ==========
 def descargar_fotos_firebase():
     print("[INFO] Descargando imágenes de Firebase...")
     limpiar_carpeta(CARPETA_LOCAL_FOTOS)
@@ -231,7 +231,8 @@ def procesar_imagenes():
     historial_desconocidos = [] # Historial de desconocidos para detección recurrente
     persona_sin_rostro_contador = 0 # Contador para alarma de persona sin rostro
     last_group_alert_time = None # Tiempo de última alerta grupal
-
+    embeddings_update_interval = 600 
+    
     while True: # Bucle infinito para procesar imágenes continuamente
         # 1. Descargar nuevas imágenes de la carpeta 'uploads/'
         imagenes = descargar_fotos_firebase() 
@@ -240,51 +241,44 @@ def procesar_imagenes():
             time.sleep(10) # Esperar antes de volver a verificar
             continue
 
-        current_utc_time = datetime.now(timezone.utc) # Hora actual en UTC para consistencia
-        # Limpiar historial de desconocidos viejos (más de 60 segundos)
+        current_utc_time = datetime.now(timezone.utc) 
         historial_desconocidos[:] = [item for item in historial_desconocidos if (current_utc_time - item.get('ultima_vista', current_utc_time)).total_seconds() <= 60]
 
         for img_dict in imagenes: # Procesar cada imagen descargada
-            local_path = img_dict['local_path'] # Ruta local de la imagen
-            blob = img_dict['blob'] # Objeto blob de Firebase Storage para eliminarla después
+            local_path = img_dict['local_path']
+            blob = img_dict['blob']
             nombre_archivo = img_dict['nombre'] 
 
-            # Extraer el ID del dispositivo del nombre del archivo (ej. "camera001_timestamp.jpg" -> "camera001")
             device_id = nombre_archivo.split('_')[0] if '_' in nombre_archivo else 'unknown'
             print(f"[DEBUG] Device ID extraído: {device_id}") 
 
-            # Obtener el email del usuario propietario de este dispositivo
             owner_email = get_user_email_by_device_id(device_id)
             if not owner_email:
                 print(f"[INFO] Dispositivo {device_id} no asociado a ningún usuario. Se omite procesamiento facial/notificaciones.")
                 try:
-                    blob.delete() # Eliminar la imagen original del bucket 'uploads/'
+                    blob.delete() 
                 except Exception as e:
                     print(f"Error al eliminar blob {blob.name} sin usuario asociado: {e}")
                 continue
             
             # --- Carga y Cache de Embeddings por Usuario ---
-            # Sanitizar el email para usarlo como parte de una ruta o clave
             user_email_safe = "".join([c for c in owner_email if c.isalnum() or c in ('_', '-')]) 
             
             known_embeddings = [] 
             known_labels = [] 
 
-            with embeddings_cache_lock: # Proteger el acceso al caché global
-                # Comprobar si los embeddings ya están en caché para este usuario y son recientes
+            with embeddings_cache_lock:
                 if user_email_safe in user_embeddings_cache and \
-                   (time.time() - user_embeddings_cache[user_email_safe]['timestamp']) < 3600: # Caché de 1 hora
+                   (time.time() - user_embeddings_cache[user_email_safe]['timestamp']) < 3600: 
                     
                     known_embeddings = user_embeddings_cache[user_email_safe]['embeddings']
                     known_labels = user_embeddings_cache[user_email_safe]['labels']
                     print(f"[INFO] Embeddings cargados desde caché para {owner_email}.")
                 else:
                     print(f"[INFO] Embeddings no encontrados en caché o expirados para {owner_email}. Descargando y cargando.")
-                    # Descargar y cargar embeddings para este usuario específico
                     descargar_embeddings_firebase_for_user(user_email_safe) 
                     known_embeddings, known_labels = cargar_embeddings_for_user(user_email_safe) 
                     
-                    # Almacenar en caché para uso futuro
                     user_embeddings_cache[user_email_safe] = {
                         "embeddings": known_embeddings,
                         "labels": known_labels,
@@ -293,7 +287,6 @@ def procesar_imagenes():
                     print(f"[INFO] Embeddings cargados y cacheados para {owner_email}.")
             # --- FIN Carga y Cache de Embeddings por Usuario ---
 
-            # Si no hay embeddings disponibles para el usuario, omitir el reconocimiento facial
             if not known_embeddings:
                 print(f"[INFO] No hay embeddings disponibles para el usuario {owner_email}. Omitiendo reconocimiento facial.")
                 try:

@@ -359,59 +359,61 @@ def get_event_history():
         app.logger.error(f"Error al obtener historial de eventos: {e}")
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
-# --------------- API para obtener datos de usuario -------------------
+#---------- endpoint para obtener los datos para el dashboard ---------------
 @app.route('/api/dashboard_data', methods=['GET'])
 @jwt_required()
 def get_dashboard_data():
     current_user_email = get_jwt_identity()
-
+    
     user_doc_ref = db.collection('usuarios').document(current_user_email)
     user_doc = user_doc_ref.get()
 
     if not user_doc.exists:
         app.logger.warning(f"get_dashboard_data: User {current_user_email} not found.")
         return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
-
+    
     user_data = user_doc.to_dict()
     user_devices = user_data.get('devices', [])
 
     if not user_devices:
-        # Si el usuario no tiene dispositivos, devuelve listas vacías y ceros
         return jsonify({
             'latest_events': [],
             'total_entries_today': 0,
             'alarms_today': 0
         }), 200
 
-    # --- CAMBIO CLAVE AQUÍ: Filtrar por device_id, no por user_email ---
+    # --- Lógica para obtener los últimos eventos ---
+    # Filtrar por los dispositivos del usuario y ordenar por timestamp descendente
     latest_events_query = db.collection('events') \
                           .where('device_id', 'in', user_devices) \
                           .order_by('timestamp', direction=firestore.Query.DESCENDING) \
-                          .limit(5)
-
+                          .limit(5) # Últimos 5 eventos para el resumen del dashboard
+    
     events_list = []
     for event in latest_events_query.stream():
         event_data = event.to_dict()
         events_list.append({
-            'id': event.id,
+            'id': event.id, # Incluir el ID del documento si es útil
             'person_name': event_data.get('person_name', 'Desconocido'),
             'event_type': event_data.get('event_type', 'unknown'),
-            'timestamp': event_data.get('timestamp').isoformat() if isinstance(event_data.get('timestamp'), datetime) else event_data.get('timestamp'),
+            'timestamp': event_data.get('timestamp').isoformat() if isinstance(event_data.get('timestamp'), datetime) else event_data.get('timestamp'), # Asegurar formato ISO
             'image_url': event_data.get('image_url', ''),
             'event_details': event_data.get('event_details', ''),
             'device_id': event_data.get('device_id', 'unknown')
         })
 
-    # --- CAMBIO CLAVE AQUÍ: Filtrar por device_id, no por user_email ---
+    # --- Lógica para calcular estadísticas diarias (Entradas Hoy, Alarmas Hoy) ---
+    # Obtener la fecha de hoy en la zona horaria de Caracas
     now_caracas = datetime.now(CARACAS_TIMEZONE)
     today_start = now_caracas.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = now_caracas.replace(hour=23, minute=59, second=59, microsecond=999999)
 
+    # Consulta para todos los eventos de hoy
     today_events_query = db.collection('events') \
                           .where('device_id', 'in', user_devices) \
                           .where('timestamp', '>=', today_start) \
                           .where('timestamp', '<=', today_end)
-
+    
     total_entries_today = 0
     alarms_today = 0
 
@@ -420,7 +422,11 @@ def get_dashboard_data():
         total_entries_today += 1
         if event_data.get('event_type') in ['alarm', 'unknown_person', 'unknown_person_repeated_alarm', 'person_no_face_alarm']:
             alarms_today += 1
-
+    
+    app.logger.info(f"DEBUG_DASHBOARD: latest_events_query found {len(events_list)} events.")
+    app.logger.info(f"DEBUG_DASHBOARD: latest_events_query data: {events_list}") # DEBUG para ver la data exacta
+    app.logger.info(f"DEBUG_DASHBOARD: total_entries_today: {total_entries_today}, alarms_today: {alarms_today}") # DEBUG para ver los contadores
+    
     return jsonify({
         'latest_events': events_list,
         'total_entries_today': total_entries_today,
