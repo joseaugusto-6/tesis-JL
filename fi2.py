@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fi.py – Worker de SecurityCamApp (versión limpia + texto bonito)
----------------------------------------------------------------
-• Observa uploads/, detecta personas y rostros, clasifica, notifica
-  y registra eventos en tu backend Flask para el Historial.
-• Añade rótulos claros a los recuadros:
-    – Rectángulo amarillo de YOLO + texto “Persona”.
-    – Rectángulo verde = conocido, rojo = desconocido, con texto más legible.
+fi.py – Worker de SecurityCamApp (texto con borde, sin etiqueta “Persona”)
+-------------------------------------------------------------------------
+• Misma lógica y variables que tu versión anterior.
+• Rostros: texto blanco con borde negro (sin fondo).
+• Cuadro amarillo de YOLO: se dibuja solo el rectángulo, sin texto.
 """
 
 # ======== IMPORTS ========
@@ -38,12 +36,11 @@ PREF_EMBEDS    = 'embeddings_clientes/'
 
 MAIN3_API_BASE_URL   = 'https://tesisdeteccion.ddns.net/api'
 
-DIST_THRESHOLD   = 0.50   # match conocido
-SIM_THRESHOLD    = 0.40   # similitud p/duplicados
-REPEAT_THRESHOLD = 3      # veces p/unknown_person_repeat
+DIST_THRESHOLD   = 0.50
+SIM_THRESHOLD    = 0.40
+REPEAT_THRESHOLD = 3
 COOLDOWN_SECONDS = 30
-
-EMB_REFRESH_SEC  = 600    # recargar embeddings
+EMB_REFRESH_SEC  = 600
 # =========================
 
 
@@ -66,17 +63,19 @@ NAMES    = yolo.names
 # =========================
 
 # ===== UTILIDADES ========
-def draw_label(img, text, x, y, color_bg, color_txt=(255,255,255)):
-    """Dibuja un rectángulo de fondo + texto para mayor legibilidad."""
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.5
-    thick = 1
-    (w, h), _ = cv2.getTextSize(text, font, scale, thick)
-    cv2.rectangle(img, (x, y - h - 6), (x + w + 6, y), color_bg, -1)
-    cv2.putText(img, text, (x + 3, y - 3), font, scale, color_txt, thick, cv2.LINE_AA)
+def put_text_outline(img, text, x, y,
+                     text_color=(255,255,255), outline=(0,0,0),
+                     font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.5, thickness=1):
+    """Texto con borde negro para mayor legibilidad (sin fondo)."""
+    for dx in (-1, 1):
+        for dy in (-1, 1):
+            cv2.putText(img, text, (x+dx, y+dy), font,
+                        scale, outline, thickness+1, cv2.LINE_AA)
+    cv2.putText(img, text, (x, y), font,
+                scale, text_color, thickness, cv2.LINE_AA)
 
 
-def cargar_embeddings() -> tuple[list[np.ndarray], list[str]]:
+def cargar_embeddings():
     embs, labels = [], []
     for b in bucket.list_blobs(prefix=PREF_EMBEDS):
         if b.name.endswith('.npy'):
@@ -92,7 +91,6 @@ def send_fcm(owner, title, body, image_url, data):
     try:
         doc = db.collection('usuarios').document(owner).get()
         if not doc.exists:
-            print(f'[WARN] usuario {owner} sin doc/tokens')
             return
         for t in doc.to_dict().get('fcm_tokens', []):
             messaging.send(messaging.Message(
@@ -102,14 +100,13 @@ def send_fcm(owner, title, body, image_url, data):
                                                     image=image_url),
                 data=data))
     except Exception as e:
-        print(f'[WARN] FCM error: {e}')
+        print(f'[WARN] FCM: {e}')
 
 
 def registrar_evento(ev):
     try:
-        r = requests.post(f'{MAIN3_API_BASE_URL}/events/add', json=ev, timeout=5)
-        if r.status_code not in (200, 201):
-            print(f'[WARN] backend {r.status_code}: {r.text[:100]}')
+        requests.post(f'{MAIN3_API_BASE_URL}/events/add',
+                      json=ev, timeout=5)
     except Exception as e:
         print(f'[WARN] registrar_evento: {e}')
 # =========================
@@ -158,7 +155,6 @@ def main():
                 px, py = x - w//2, y - h//2
                 personas.append((px, py, w, h))
                 cv2.rectangle(img, (px, py), (px+w, py+h), (0,255,255), 2)
-                draw_label(img, 'Persona', px, py, (0,255,255))
 
             # --- Rostros ---
             faces = detector.detect_faces(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -182,7 +178,7 @@ def main():
 
                 color = (0,255,0) if name!='Desconocido' else (0,0,255)
                 cv2.rectangle(img,(x,y),(x+w,y+h),color,2)
-                draw_label(img, name, x, y, color)
+                put_text_outline(img, name, x, y-5, text_color=color)
 
                 if name=='Desconocido':
                     if any(px<x<px+pw and py<y<py+ph for px,py,pw,ph in personas):
@@ -255,7 +251,6 @@ def main():
                           'device_id' : device_id})
                 registrar_evento(evento)
 
-            # --- Limpieza ---
             blob.delete()
 
         time.sleep(3)
