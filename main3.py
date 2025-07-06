@@ -359,34 +359,36 @@ def get_event_history():
         app.logger.error(f"Error al obtener historial de eventos: {e}")
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
-# Nuevo endpoint para obtener datos del dashboard
+# --------------- API para obtener datos de usuario -------------------
 @app.route('/api/dashboard_data', methods=['GET'])
 @jwt_required()
 def get_dashboard_data():
     current_user_email = get_jwt_identity()
-    
+
     user_doc_ref = db.collection('usuarios').document(current_user_email)
     user_doc = user_doc_ref.get()
 
     if not user_doc.exists:
         app.logger.warning(f"get_dashboard_data: User {current_user_email} not found.")
         return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
-    
+
     user_data = user_doc.to_dict()
     user_devices = user_data.get('devices', [])
 
     if not user_devices:
+        # Si el usuario no tiene dispositivos, devuelve listas vacías y ceros
         return jsonify({
             'latest_events': [],
             'total_entries_today': 0,
             'alarms_today': 0
         }), 200
 
+    # --- CAMBIO CLAVE AQUÍ: Filtrar por device_id, no por user_email ---
     latest_events_query = db.collection('events') \
-                          .where('device_id', 'in', user_devices) \
+                          .where('device_id', 'in', user_devices) \ # <-- ¡CAMBIO CLAVE!
                           .order_by('timestamp', direction=firestore.Query.DESCENDING) \
                           .limit(5)
-    
+
     events_list = []
     for event in latest_events_query.stream():
         event_data = event.to_dict()
@@ -400,15 +402,16 @@ def get_dashboard_data():
             'device_id': event_data.get('device_id', 'unknown')
         })
 
+    # --- CAMBIO CLAVE AQUÍ: Filtrar por device_id, no por user_email ---
     now_caracas = datetime.now(CARACAS_TIMEZONE)
     today_start = now_caracas.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = now_caracas.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     today_events_query = db.collection('events') \
-                          .where('device_id', 'in', user_devices) \
+                          .where('device_id', 'in', user_devices) \ # <-- ¡CAMBIO CLAVE!
                           .where('timestamp', '>=', today_start) \
                           .where('timestamp', '<=', today_end)
-    
+
     total_entries_today = 0
     alarms_today = 0
 
@@ -417,7 +420,7 @@ def get_dashboard_data():
         total_entries_today += 1
         if event_data.get('event_type') in ['alarm', 'unknown_person', 'unknown_person_repeated_alarm', 'person_no_face_alarm']:
             alarms_today += 1
-    
+
     return jsonify({
         'latest_events': events_list,
         'total_entries_today': total_entries_today,

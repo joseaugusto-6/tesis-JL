@@ -39,7 +39,10 @@ FIREBASE_UPLOAD_PATH_CAPTURE_MODE = f"uploads/{CAMERA_ID_PC}/" # <--- Carpeta pa
 # Modos de operación: 'STREAMING_MODE', 'CAPTURE_MODE'
 current_mode = "STREAMING_MODE" # Modo inicial al arrancar
 last_capture_time = time.time() # Para controlar el tiempo entre capturas
-CAPTURE_INTERVAL_SECONDS = 5 # Capturar una imagen cada 5 segundos en CAPTURE_MODE
+CAPTURE_INTERVAL_SECONDS = 1 # Capturar una imagen cada 5 segundos en CAPTURE_MODE
+last_status_publish_time = time.time() # 
+STATUS_PUBLISH_INTERVAL_SECONDS = 30 # Publicar estado cada 30 segundos
+
 
 # ========== INICIALIZACIÓN FIREBASE ADMIN SDK (PARA SUBIR A STORAGE) ==========
 firebase_app_pc = None
@@ -106,14 +109,13 @@ def upload_image_to_firebase_storage(image_bytes):
         return None
 
 # ========== FUNCIÓN PRINCIPAL DE OPERACIÓN DE CÁMARA ==========
-def camera_operation_loop():
-    global last_capture_time, current_mode # Necesario para modificar globales
-    camera = cv2.VideoCapture(CAMERA_INDEX) # Usar el índice y backend configurado
+def camera_operation_loop(mqtt_client): 
+    global last_capture_time, current_mode, last_status_publish_time 
+    camera = cv2.VideoCapture(CAMERA_INDEX) 
 
     try:
         if not camera.isOpened():
             print("Error: No se pudo abrir la cámara. Asegúrate de que no esté en uso por otra aplicación.")
-            # Si la cámara no abre, no hay nada que hacer, salir
             return 
 
         print(f"Cámara abierta correctamente. Iniciando operación en {current_mode}.")
@@ -124,7 +126,6 @@ def camera_operation_loop():
                 print("Error: No se pudo leer el frame de la cámara. El bucle se detendrá.")
                 break 
 
-            # Convertir a JPEG para procesamiento y envío/subida
             ret, buffer = cv2.imencode('.jpg', frame)
             if not ret:
                 print("Error: No se pudo codificar el frame como JPEG. Saltando frame.")
@@ -132,36 +133,39 @@ def camera_operation_loop():
 
             jpeg_bytes = buffer.tobytes()
 
+            # --- Lógica de Publicación Periódica de Estado ---
+            current_time = time.time()
+            if (current_time - last_status_publish_time) >= STATUS_PUBLISH_INTERVAL_SECONDS:
+                # Usa el argumento mqtt_client para publicar
+                mqtt_client.publish(MQTT_STATUS_TOPIC, payload=f"Modo: {current_mode}", qos=MQTT_QOS, retain=True) 
+                print(f"MQTT: Estado periódico publicado: {current_mode}")
+                last_status_publish_time = current_time 
+
             # --- Lógica de Modos ---
             if current_mode == "STREAMING_MODE":
-                # Enviar el frame a la VM para el stream en vivo
                 try:
                     response = requests.post(
                         VM_STREAM_UPLOAD_URL, 
                         files={'frame': ('frame.jpg', jpeg_bytes, 'image/jpeg')},
-                        data={'camera_id': MQTT_COMMAND_TOPIC.split('/')[-1]} # Extraer camera_id de config
+                        data={'camera_id': CAMERA_ID_PC} 
                     )
                     response.raise_for_status() 
-                    # print(f"Streaming: Frame enviado a VM. Respuesta: {response.status_code}")
                 except requests.exceptions.RequestException as req_e:
                     print(f"❌ Streaming: Error al enviar frame a VM: {req_e}")
-                time.sleep(1.0 / CAMERA_FPS) # Esperar para mantener el framerate
+                time.sleep(1.0 / CAMERA_FPS) 
 
             elif current_mode == "CAPTURE_MODE":
                 current_time = time.time()
                 if (current_time - last_capture_time) >= CAPTURE_INTERVAL_SECONDS:
-                    print(f"Captura: Capturando y subiendo imagen. Modo: {current_mode}")
-                    image_public_url = upload_image_to_firebase_storage(jpeg_bytes)
-                    # Opcional: Aquí podrías enviar un evento a main3.py/api/events/add
-                    # con los datos de la imagen capturada si fi.py no lo hará por su cuenta.
-                    last_capture_time = current_time # Reiniciar el contador
-                time.sleep(0.1) # Pausa más corta en modo captura para no perder frames si el intervalo es largo.
+                    print(f"Captura: Capturando y subiendo imagen. Modo: {current_mode}.")
+                    upload_image_to_firebase_storage(jpeg_bytes)
+                    last_capture_time = current_time 
+                time.sleep(0.1) 
 
-            else: # Modo desconocido, por defecto hacer streaming
+            else:
                 print(f"Modo desconocido '{current_mode}'. Default a MODO STREAMING.")
                 current_mode = "STREAMING_MODE"
                 time.sleep(0.1)
-
 
     except Exception as e:
         print(f"Error general en camera_operation_loop: {e}")
@@ -177,24 +181,27 @@ def camera_operation_loop():
 # ========== FUNCIÓN DE INICIO ==========
 def main():
     # Inicializar el cliente MQTT
-    client = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
-    client.on_connect = on_connect
-    client.on_message = on_message
+    client_mqtt_instance = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True) # Renombrado para evitar confusión
+    client_mqtt_instance.on_connect = on_connect
+    client_mqtt_instance.on_message = on_message
 
     try:
-        client.connect(MQTT_BROKER_IP, MQTT_BROKER_PORT, 60)
-        client.loop_start() # Iniciar el bucle de MQTT en un hilo separado
+        client_mqtt_instance.connect(MQTT_BROKER_IP, MQTT_BROKER_PORT, 60)
+        client_mqtt_instance.loop_start() 
         print("MQTT: Cliente iniciado en un hilo separado.")
 
-        # Iniciar el bucle de operación de la cámara
-        camera_operation_loop()
+        # ¡CAMBIO CLAVE AQUÍ! Pasa la instancia del cliente a la función de operación de cámara
+        camera_operation_loop(client_mqtt_instance) 
 
     except Exception as e:
         print(f"Error en la ejecución principal: {e}")
     finally:
-        client.loop_stop() # Detener el bucle de MQTT
-        client.disconnect() # Desconectar el cliente MQTT
-        print("MQTT: Cliente desconectado.")
+        if 'client_mqtt_instance' in locals() and client_mqtt_instance.is_connected():
+            client_mqtt_instance.loop_stop()
+            client_mqtt_instance.disconnect()
+            print("MQTT: Cliente desconectado.")
+        else:
+            print("MQTT: Cliente no se conectó o ya estaba desconectado.")
 
 if __name__ == '__main__':
     main()
