@@ -176,7 +176,7 @@ def main():
                             name = kn
                             break
 
-                 color = (0,255,0) if name!='Desconocido' else (0,0,255)
+                color = (0,255,0) if name!='Desconocido' else (0,0,255)
                 cv2.rectangle(img, (x, y), (x+w, y+h), color, 2)   # ← marco verde/rojo
                 put_text_outline(img, name, x, y-5)                # ← texto SIEMPRE blanco
                 if name=='Desconocido':
