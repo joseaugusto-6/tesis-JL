@@ -1,59 +1,69 @@
 import os
-# import io # Eliminado - no usado
 import time
 import cv2
-import numpy as np # Necesario para cv2.imencode y numpy.tobytes
-# import random # Eliminado - no usado
-from datetime import datetime, timezone 
-from mtcnn import MTCNN
-from keras_facenet import FaceNet
-from scipy.spatial.distance import cosine
-import requests 
-import torch 
-
-import firebase_admin
+import numpy as np
+import subprocess # Se mantiene, aunque ahora OpenCV es la fuente de frames
+import paho.mqtt.client as mqtt 
+from datetime import datetime, timezone, timedelta 
+import firebase_admin 
 from firebase_admin import credentials, storage, messaging 
 from firebase_admin import firestore 
 
-# ========== CONFIGURACIÓN FIREBASE ==========
-SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
-FIREBASE_INIT_BUCKET_NAME = 'security-cam-f322b.firebasestorage.app' 
-FIREBASE_STORAGE_BUCKET_DOMAIN = 'security-cam-f322b.firebasestorage.app' # Mantenido según tu petición
+# ========== CONFIGURACIÓN GLOBAL ==========
+# -- Configuración de la Cámara --
+CAMERA_INDEX = 0 + cv2.CAP_DSHOW 
+CAMERA_RESOLUTION = (640, 480)
+CAMERA_ID_PC = "camera001"
+CAMERA_FPS = 30 
 
-# Carpeta de imágenes a procesar y de embeddings EN FIREBASE
-FIREBASE_PATH_FOTOS = 'uploads/'             
-FIREBASE_PATH_EMBEDDINGS = 'embeddings_clientes/' 
-FIREBASE_PATH_ALARMAS = 'alarmas_procesadas/' 
+# --- NUEVO: Definir la zona horaria de Caracas ---
+CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) 
 
-# ========== CONFIGURACIÓN LOCAL ==========
-CARPETA_LOCAL_FOTOS = '/tmp/fotos/'
-CARPETA_LOCAL_EMBEDDINGS = '/tmp/embeddings/'
-# CARPETA_LOCAL_ALARMAS = '/tmp/alarmas_local/' # Eliminado - ya no se guarda localmente
-for d in [CARPETA_LOCAL_FOTOS, CARPETA_LOCAL_EMBEDDINGS]: # Solo inicializa las carpetas necesarias
-    os.makedirs(d, exist_ok=True)
+# -- Configuración MQTT --
+MQTT_BROKER_IP = "34.69.206.32" 
+MQTT_BROKER_PORT = 1883
+MQTT_CLIENT_ID = "camera_pc_client" 
+MQTT_COMMAND_TOPIC = f"camera/commands/{CAMERA_ID_PC}" 
+MQTT_STATUS_TOPIC = f"camera/status/{CAMERA_ID_PC}" 
+MQTT_QOS = 1 
 
-# ========== CONFIGURACIÓN DE TU BACKEND MAIN3.PY ==========
-MAIN3_API_BASE_URL = 'https://tesisdeteccion.ddns.net/api' # ¡ACTUALIZA ESTO CON TU DOMINIO DDNS!
+# -- Configuración de la VM (main3.py) --
+VM_STREAM_UPLOAD_URL = "https://tesisdeteccion.ddns.net/api/stream_upload" 
 
-# ========== PARÁMETROS DEL SISTEMA ==========
-DISTANCE_THRESHOLD = 0.5
-SIMILARITY_THRESHOLD = 0.4
-DETECCIONES_REQUERIDAS = 3
-cooldown_seconds = 30 
+# -- Configuración de Firebase Storage para subida directa (Modo Captura) --
+FIREBASE_SERVICE_ACCOUNT_PATH_PC = "D:/TESIS/AAA THE LAST DANCE/security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json"
+FIREBASE_STORAGE_BUCKET_NAME = "security-cam-f322b.firebasestorage.app" 
+FIREBASE_UPLOAD_PATH_CAPTURE_MODE = f"uploads/{CAMERA_ID_PC}/" 
+
+# ========== VARIABLES DE ESTADO ==========
+# Modos de operación: 'STREAMING_MODE', 'CAPTURE_MODE'
+current_mode = "STREAMING_MODE" 
+last_capture_time = time.time() 
+CAPTURE_INTERVAL_SECONDS = 5 
+last_status_publish_time = time.time() # Para control de publicación de estado periódico
+STATUS_PUBLISH_INTERVAL_SECONDS = 30 # Publicar estado cada 30 segundos
+
+# Cache para embeddings por usuario: { "user_email_safe": {"embeddings": [], "labels": [], "timestamp": <last_load_time>} }
+user_embeddings_cache = {}
+embeddings_cache_lock = threading.Lock() # Para proteger el acceso al caché
+
 
 # ========== INICIALIZACIÓN FIREBASE ==========
+firebase_app_pc = None
+bucket_pc = None # Inicializar bucket_pc fuera del try/except
 try:
-    cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
     if not firebase_admin._apps: 
-        firebase_admin.initialize_app(cred, {'projectId': 'security-cam-f322b'}) 
-    bucket = storage.bucket(name=FIREBASE_INIT_BUCKET_NAME) 
-    db = firestore.client() 
-    print("[INFO] Firebase Admin SDK inicializado correctamente para FCM, Firestore y Storage.")
+        cred_pc = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH_PC)
+        firebase_app_pc = firebase_admin.initialize_app(cred_pc, {'storageBucket': FIREBASE_STORAGE_BUCKET_NAME}, name='camera_pc_app')
+    else:
+        firebase_app_pc = firebase_admin.get_app(name='camera_pc_app')
+
+    bucket_pc = storage.bucket(app=firebase_app_pc) 
+    print("[INFO] Firebase Admin SDK (PC) inicializado correctamente para Storage.")
 except Exception as e:
-    print(f"[ERROR] Error al inicializar Firebase Admin SDK: {e}")
-    import traceback
-    traceback.print_exc()
-    exit()
+    print(f"[ERROR] Error al inicializar Firebase Admin SDK (PC): {e}")
+    print("La subida de imágenes a Storage no funcionará.")
+
 
 # ========== INICIALIZAR MODELOS ==========
 embedder = FaceNet()
@@ -68,9 +78,6 @@ except Exception as e:
 
 
 # ========== FUNCIONES AUXILIARES ==========
-# def obtener_color_aleatorio(): # Eliminado - no usado
-#     return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-
 def agregar_borde_texto(imagen, texto, pos, fuente, tam, color_texto, color_borde, grosor):
     x, y = pos
     for dx in [-1, 1]:
@@ -88,45 +95,48 @@ def limpiar_carpeta(path):
         except Exception as e:
             print(f"Error al limpiar {os.path.join(path, f)}: {e}")
 
-# ========== GESTIÓN DE EMBEDDINGS ==========
-def descargar_embeddings_firebase():
-    print("[INFO] Descargando embeddings de Firebase...")
-    limpiar_carpeta(CARPETA_LOCAL_EMBEDDINGS)
-    blobs = bucket.list_blobs(prefix=FIREBASE_PATH_EMBEDDINGS)
+# ========== GESTIÓN DE EMBEDDINGS (Ahora con filtro por usuario) ==========
+def descargar_embeddings_firebase_for_user(user_email_safe): # Acepta user_email_safe
+    print(f"[INFO] Descargando embeddings de Firebase para {user_email_safe}...")
+    
+    # Asegurarse de que la carpeta local esté limpia antes de cada descarga para evitar mezclas
+    limpiar_carpeta(CARPETA_LOCAL_EMBEDDINGS) 
+
+    # Listar blobs solo para el email del usuario específico
+    blobs = storage.bucket(name=FIREBASE_INIT_BUCKET_NAME, app=firebase_app_pc).list_blobs(prefix=f"{FIREBASE_PATH_EMBEDDINGS}{user_email_safe}/") 
     count = 0
     for blob in blobs:
         if blob.name.endswith('.npy') and not blob.name.endswith('/'):
-            relative_path = os.path.relpath(blob.name, FIREBASE_PATH_EMBEDDINGS)
-            local_dir = os.path.join(CARPETA_LOCAL_EMBEDDINGS, os.path.dirname(relative_path))
-            os.makedirs(local_dir, exist_ok=True)
-            local_path = os.path.join(local_dir, os.path.basename(blob.name))
-            
-            blob.download_to_filename(local_path)
-            count += 1
-    print(f"[INFO] ¡Descarga de embeddings terminada! ({count} archivos)")
+            local_path = os.path.join(CARPETA_LOCAL_EMBEDDINGS, os.path.basename(blob.name))
+            try:
+                blob.download_to_filename(local_path)
+                count += 1
+            except Exception as e:
+                print(f"Error al descargar {blob.name}: {e}")
+    print(f"[INFO] ¡Descarga de embeddings terminada! ({count} archivos para {user_email_safe})")
 
-def cargar_embeddings():
+def cargar_embeddings_for_user(user_email_safe): # Acepta user_email_safe
     known_embeddings = []
     known_labels = []
-    for root, dirs, files in os.walk(CARPETA_LOCAL_EMBEDDINGS):
-        for file in files:
-            if file.endswith('.npy'):
-                try:
-                    vec = np.load(os.path.join(root, file), allow_pickle=True).item()
-                    for emb in vec['embeddings']:
-                        known_embeddings.append(emb)
-                        known_labels.append(vec['name'])
-                except Exception as e:
-                    print(f"Error al cargar embedding {file}: {e}")
-    print(f"Embeddings cargados: {len(known_embeddings)}")
-    print(f"Etiquetas de conocidos: {set(known_labels)}")
+    # Solo cargar los embeddings que acabamos de descargar para este usuario
+    for file in os.listdir(CARPETA_LOCAL_EMBEDDINGS):
+        if file.endswith('.npy'):
+            try:
+                vec = np.load(os.path.join(CARPETA_LOCAL_EMBEDDINGS, file), allow_pickle=True).item()
+                for emb in vec['embeddings']:
+                    known_embeddings.append(emb)
+                    known_labels.append(vec['name'])
+            except Exception as e:
+                print(f"Error al cargar embedding {file}: {e}")
+    print(f"Embeddings cargados para {user_email_safe}: {len(known_embeddings)}")
+    print(f"Etiquetas de conocidos para {user_email_safe}: {set(known_labels)}")
     return known_embeddings, known_labels
 
 # ========== GESTIÓN DE FOTOS A PROCESAR ==========
 def descargar_fotos_firebase():
     print("[INFO] Descargando imágenes de Firebase...")
     limpiar_carpeta(CARPETA_LOCAL_FOTOS)
-    blobs = bucket.list_blobs(prefix=FIREBASE_PATH_FOTOS)
+    blobs = bucket.list_blobs(prefix=FIREBASE_PATH_FOTOS) # Usamos el bucket_pc global para esta operación
     imagenes = []
     for blob in blobs:
         if not blob.name.endswith('/') and (blob.name.lower().endswith(('.jpg', '.jpeg', '.png'))):
@@ -173,7 +183,7 @@ def send_fcm_notification_direct(user_email, title, body, image_url=None, custom
                     data=custom_data or {}
                 )
                 print(f"DEBUG_FCM: Enviando mensaje a token: {token[:10]}...")
-                response = messaging.send(message) # <-- Envío individual
+                response = messaging.send(message) 
                 print(f"DEBUG_FCM: Respuesta FCM para {token[:10]}: {response}")
                 success_count += 1
             except Exception as token_e:
@@ -214,21 +224,35 @@ def get_user_email_by_device_id(device_id):
 
 # ========== PROCESAMIENTO PRINCIPAL ==========
 def procesar_imagenes():
+    global user_embeddings_cache, embeddings_cache_lock # Acceder a las globales del caché
     historial_desconocidos = []
     persona_sin_rostro_contador = 0
     last_group_alert_time = None
-    last_embeddings_download = 0
+    # last_embeddings_download = 0 # Ya no es necesaria por el caché por usuario
     embeddings_update_interval = 600 
-    known_embeddings, known_labels = [], []
+    
+    # Inicializar estas variables aquí o asegurarse de que siempre se inicializan antes de usarse.
+    # known_embeddings, known_labels se cargarán por usuario.
+
+    client_mqtt = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
+    client_mqtt.on_connect = on_connect # Definida globalmente
+    client_mqtt.on_message = on_message # Definida globalmente
+
+    try:
+        client_mqtt.connect(MQTT_BROKER_IP, MQTT_BROKER_PORT, 60)
+        client_mqtt.loop_start() 
+        print("MQTT: Cliente iniciado en un hilo separado para fi.py.")
+    except Exception as e:
+        print(f"MQTT: Error al conectar el cliente MQTT de fi.py: {e}")
+        print("El procesamiento de comandos MQTT no funcionará.")
 
     while True:
-        now_ts = time.time()
-        if now_ts - last_embeddings_download > embeddings_update_interval or not known_embeddings:
-            descargar_embeddings_firebase()
-            known_embeddings, known_labels = cargar_embeddings()
-            last_embeddings_download = now_ts
+        # now_ts = time.time() # Ya no es necesaria por el caché por usuario
+        # if now_ts - last_embeddings_download > embeddings_update_interval or not known_embeddings:
+        #    # Esta lógica de recarga global de embeddings ha sido reemplazada por caché por usuario.
+        #    pass 
 
-        imagenes = descargar_fotos_firebase()
+        imagenes = descargar_fotos_firebase() # Descargar fotos de 'uploads/'
         if not imagenes:
             print("No hay imágenes nuevas para procesar.")
             time.sleep(10)
@@ -247,12 +271,48 @@ def procesar_imagenes():
 
             owner_email = get_user_email_by_device_id(device_id)
             if not owner_email:
-                print(f"[INFO] Dispositivo {device_id} no asociado a ningún usuario. No se enviarán notificaciones ni se guardará historial.")
+                print(f"[INFO] Dispositivo {device_id} no asociado a ningún usuario. Se omite procesamiento facial/notificaciones.")
                 try:
                     blob.delete() 
                 except Exception as e:
                     print(f"Error al eliminar blob {blob.name} sin usuario asociado: {e}")
                 continue
+            
+            # --- Carga y Cache de Embeddings por Usuario ---
+            user_email_safe = "".join([c for c in owner_email if c.isalnum() or c in ('_', '-')]) 
+            known_embeddings = [] # Inicializar para el scope
+            known_labels = [] # Inicializar para el scope
+
+            with embeddings_cache_lock:
+                if user_email_safe in user_embeddings_cache and \
+                   (time.time() - user_embeddings_cache[user_email_safe]['timestamp']) < 3600: # 1 hora de caché
+                    
+                    known_embeddings = user_embeddings_cache[user_email_safe]['embeddings']
+                    known_labels = user_embeddings_cache[user_email_safe]['labels']
+                    print(f"[INFO] Embeddings cargados desde caché para {owner_email}.")
+                else:
+                    print(f"[INFO] Embeddings no encontrados en caché o expirados para {owner_email}. Descargando y cargando.")
+                    descargar_embeddings_firebase_for_user(user_email_safe) # Llamada a la función de descarga por usuario
+                    known_embeddings, known_labels = cargar_embeddings_for_user(user_email_safe) # Llamada a la función de carga por usuario
+                    
+                    # Almacenar en caché
+                    user_embeddings_cache[user_email_safe] = {
+                        "embeddings": known_embeddings,
+                        "labels": known_labels,
+                        "timestamp": time.time()
+                    }
+                    print(f"[INFO] Embeddings cargados y cacheados para {owner_email}.")
+            # --- FIN Carga y Cache de Embeddings por Usuario ---
+
+            # Si no hay embeddings para el usuario, omitir procesamiento facial
+            if not known_embeddings:
+                print(f"[INFO] No hay embeddings disponibles para el usuario {owner_email}. Omitiendo reconocimiento facial.")
+                try:
+                    blob.delete() 
+                except Exception as e:
+                    print(f"Error al eliminar blob {blob.name} sin embeddings: {e}")
+                continue
+
 
             img = cv2.imread(local_path)
             if img is None:
@@ -334,15 +394,11 @@ def procesar_imagenes():
             # --- Lógica de Eventos y Notificaciones ---
             
             if len(conocidos_en_imagen) > 0 or len(rostros_desconocidos_validados) > 0 or len(personas_detectadas_bboxes) > 0:
-                # La definición de output_filename y la subida de la imagen van AQUÍ:
-                output_filename = f"{nombre_archivo.split('.')[0]}_processed.jpg" # <-- ¡ESTA LÍNEA DEBE ESTAR AQUÍ!
-
                 # Convertir la imagen procesada a bytes para subirla directamente
                 _, img_encoded = cv2.imencode('.jpg', img_result)
                 img_bytes = img_encoded.tobytes()
 
-
-                blob_processed = bucket.blob(FIREBASE_PATH_ALARMAS + output_filename)
+                blob_processed = bucket.blob(FIREBASE_PATH_ALARMAS + nombre_archivo.replace('.jpg', '_processed.jpg')) # Usar nombre_archivo
                 blob_processed.upload_from_string(img_bytes, content_type='image/jpeg') 
                 blob_processed.make_public() 
                 image_public_url = blob_processed.public_url
