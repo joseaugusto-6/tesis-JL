@@ -14,6 +14,7 @@ CAMERA_INDEX = 0 + cv2.CAP_DSHOW # Índice de tu cámara + backend que funciona 
 CAMERA_RESOLUTION = (480, 320)
 CAMERA_ID_PC = "camera001"
 CAMERA_FPS = 10 # FPS deseado para stream o captura
+is_camera_on = True 
 
 # --- NUEVO: Definir la zona horaria de Caracas ---
 CARACAS_TIMEZONE = timezone(timedelta(hours=-4)) # GMT-4 (ejemplo, ajusta si es diferente)
@@ -84,6 +85,7 @@ def on_message(client, userdata, msg):
     if msg.topic == MQTT_COMMAND_TOPIC:
         # Convertir a minúsculas y quitar posibles espacios para mayor tolerancia
         processed_command = command.strip().upper() 
+        
         if command == "STREAMING_MODE":
             current_mode = "STREAMING_MODE"
             print("Cambiando a: MODO STREAMING")
@@ -92,6 +94,17 @@ def on_message(client, userdata, msg):
             print("Cambiando a: MODO CAPTURA DE IMÁGENES")
         else:
             print(f"Comando desconocido: {command}")
+
+    elif msg.topic == f"camera/power/{CAMERA_ID_PC}": 
+        power_command = command.strip().upper()
+        if power_command == "ON":
+            is_camera_on = True
+            print("Cámara: ENCENDIENDO...")
+        elif power_command == "OFF":
+            is_camera_on = False
+            print("Cámara: APAGANDO...")
+        else:
+            print(f"Comando de encendido/apagado desconocido: {command}")
 
         # Publicar el nuevo estado
         client.publish(MQTT_STATUS_TOPIC, payload=f"Modo: {current_mode}", qos=MQTT_QOS, retain=True)
@@ -122,51 +135,60 @@ def camera_operation_loop(mqtt_client):
         print(f"Cámara abierta correctamente. Iniciando operación en {current_mode}.")
 
         while True:
-            success, frame = camera.read()
-            if not success:
-                print("Error: No se pudo leer el frame de la cámara. El bucle se detendrá.")
-                break 
-
-            ret, buffer = cv2.imencode('.jpg', frame)
-            if not ret:
-                print("Error: No se pudo codificar el frame como JPEG. Saltando frame.")
-                continue
-
-            jpeg_bytes = buffer.tobytes()
-
-            # --- Lógica de Publicación Periódica de Estado ---
+            # Publicar el estado COMPLETO periódicamente (modo + encendido)
             current_time = time.time()
             if (current_time - last_status_publish_time) >= STATUS_PUBLISH_INTERVAL_SECONDS:
-                # Usa el argumento mqtt_client para publicar
-                mqtt_client.publish(MQTT_STATUS_TOPIC, payload=f"Modo: {current_mode}", qos=MQTT_QOS, retain=True) 
-                print(f"MQTT: Estado periódico publicado: {current_mode}")
+                status_payload = f"Modo: {current_mode}; Power: {'ON' if is_camera_on else 'OFF'}" # <-- Payload completo
+                mqtt_client.publish(MQTT_STATUS_TOPIC, payload=status_payload, qos=MQTT_QOS, retain=True) 
+                print(f"MQTT: Estado periódico publicado: {status_payload}")
                 last_status_publish_time = current_time 
 
-            # --- Lógica de Modos ---
-            if current_mode == "STREAMING_MODE":
-                try:
-                    response = requests.post(
-                        VM_STREAM_UPLOAD_URL, 
-                        files={'frame': ('frame.jpg', jpeg_bytes, 'image/jpeg')},
-                        data={'camera_id': CAMERA_ID_PC} 
-                    )
-                    response.raise_for_status() 
-                except requests.exceptions.RequestException as req_e:
-                    print(f"❌ Streaming: Error al enviar frame a VM: {req_e}")
-                time.sleep(1.0 / CAMERA_FPS) 
+            if is_camera_on: # <-- ¡Solo operar la cámara si está encendida!
+                success, frame = camera.read()
+                if not success:
+                    print("Error: No se pudo leer el frame de la cámara. El bucle se detendrá.")
+                    break 
 
-            elif current_mode == "CAPTURE_MODE":
-                current_time = time.time()
-                if (current_time - last_capture_time) >= CAPTURE_INTERVAL_SECONDS:
-                    print(f"Captura: Capturando y subiendo imagen. Modo: {current_mode}.")
-                    upload_image_to_firebase_storage(jpeg_bytes)
-                    last_capture_time = current_time 
-                time.sleep(0.1) 
+                ret, buffer = cv2.imencode('.jpg', frame)
+                if not ret:
+                    print("Error: No se pudo codificar el frame como JPEG. Saltando frame.")
+                    continue
 
+                jpeg_bytes = buffer.tobytes()
+
+                # --- Lógica de Modos ---
+                if current_mode == "STREAMING_MODE":
+                    try:
+                        response = requests.post(
+                            VM_STREAM_UPLOAD_URL, 
+                            files={'frame': ('frame.jpg', jpeg_bytes, 'image/jpeg')},
+                            data={'camera_id': CAMERA_ID_PC} 
+                        )
+                        response.raise_for_status() 
+                    except requests.exceptions.RequestException as req_e:
+                        print(f"❌ Streaming: Error al enviar frame a VM: {req_e}")
+                    time.sleep(1.0 / CAMERA_FPS) 
+
+                elif current_mode == "CAPTURE_MODE":
+                    current_time = time.time()
+                    if (current_time - last_capture_time) >= CAPTURE_INTERVAL_SECONDS:
+                        print(f"Captura: Capturando y subiendo imagen. Modo: {current_mode}.")
+                        upload_image_to_firebase_storage(jpeg_bytes)
+                        last_capture_time = current_time 
+                    time.sleep(0.1) 
+
+                else:
+                    print(f"Modo desconocido '{current_mode}'. Default a MODO STREAMING.")
+                    current_mode = "STREAMING_MODE"
+                    time.sleep(0.1)
             else:
-                print(f"Modo desconocido '{current_mode}'. Default a MODO STREAMING.")
-                current_mode = "STREAMING_MODE"
-                time.sleep(0.1)
+                # Si la cámara está OFF, no leemos frames, solo esperamos
+                print("Cámara APAGADA. Esperando comando ON.")
+                time.sleep(1) # Pequeña pausa para no saturar CPU
+                # Si la cámara estaba abierta, liberarla para que no consuma recursos
+                if camera is not None and camera.isOpened():
+                    camera.release()
+                    camera = None # Marcar como cerrada
 
     except Exception as e:
         print(f"Error general en camera_operation_loop: {e}")

@@ -88,10 +88,27 @@ def on_mqtt_message_flask(client, userdata, msg):
 
     if topic.startswith("camera/status/"):
         camera_id = topic.split('/')[-1]
-        mode_status = payload.replace("Modo: ", "") # Extraer el modo
+        parts = payload.split(";")
+
+        mode_status = "UNKNOWN"
+        power_status = False # Por defecto a False (OFF)
+
+        for part in parts:
+            if part.startswith("Modo: "):
+                mode_status = part.replace("Modo: ", "").strip()
+            elif part.startswith("Power: "):
+                power_status_str = part.replace("Power: ", "").strip()
+                power_status = (power_status_str == "ON") # True si es "ON", False si es "OFF"
+
         with camera_status_lock:
-            camera_status[camera_id] = {"mode": mode_status, "timestamp": datetime.now()}
-        print(f"MQTT (Flask): Estado de {camera_id} actualizado a {mode_status}")
+            # Asegurarse de mantener el modo existente si solo se actualiza el power, o viceversa
+            current_cam_status = camera_status.get(camera_id, {})
+            current_cam_status['mode'] = mode_status # Actualizar modo
+            current_cam_status['is_on'] = power_status # <-- ¡NUEVO: Actualizar estado de encendido!
+            current_cam_status['timestamp'] = datetime.now() # Actualizar timestamp
+            camera_status[camera_id] = current_cam_status # Guardar el estado actualizado
+
+        print(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {mode_status}, Power: {power_status}")
 
 flask_mqtt_client.on_connect = on_mqtt_connect_flask
 flask_mqtt_client.on_message = on_mqtt_message_flask # Añade la función on_message
@@ -460,7 +477,8 @@ def get_user_devices():
             devices_with_status.append({
                 'id': device_id,
                 'mode': mode,
-                'is_active': status_info is not None and (datetime.now() - status_info['timestamp']).total_seconds() < 60 # Considerar activa si el último reporte es de hace menos de 60s
+                'is_active': status_info is not None and (datetime.now() - status_info['timestamp']).total_seconds(), < 60 # Considerar activa si el último reporte es de hace menos de 60s
+                'is_on': status_info['is_on'] if status_info and 'is_on' in status_info else False
             })
 
     return jsonify({"devices": devices_with_status}), 200 # Devuelve una lista de diccionarios), 200
