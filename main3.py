@@ -112,6 +112,52 @@ def on_mqtt_message_flask(client, userdata, msg):
 
         # Este log ahora debería mostrar "Power: True" cuando corresponda.
         print(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {mode_status}, Power: {power_status}")
+def on_message(client, userdata, msg):
+    global camera_status 
+
+    topic = msg.topic
+    payload = msg.payload.decode('utf-8')
+    app.logger.info(f"MQTT (Flask): Mensaje recibido en '{topic}': {payload}")
+
+    # Extraer camera_id del tópico
+    match_id = re.match(r'camera/status/(.+)', topic)
+    if not match_id:
+        app.logger.warning(f"MQTT (Flask): Tópico no reconocido para estado de cámara: {topic}")
+        return
+
+    camera_id = match_id.group(1)
+
+    # Extraer Modo y Power del payload usando expresiones regulares
+    mode_match = re.search(r'Modo:\s*(\w+)', payload)
+    power_match = re.search(r'Power:\s*(\w+)', payload)
+
+    new_mode = mode_match.group(1) if mode_match else "UNKNOWN"
+    new_power_str = power_match.group(1) if power_match else None
+
+    # DEBUG_POWER_PARSE: Ver los valores intermedios
+    print(f"DEBUG_POWER_PARSE: Payload raw: '{payload}'") # Ver el payload completo
+    print(f"DEBUG_POWER_PARSE: new_mode extraido: '{new_mode}'")
+    print(f"DEBUG_POWER_PARSE: new_power_str extraido (antes de upper): '{new_power_str}'")
+
+    new_is_on = (new_power_str.upper() == 'ON') if new_power_str else False 
+
+    print(f"DEBUG_POWER_PARSE: new_is_on calculado: {new_is_on}") # DEBUG
+
+    with camera_status_lock: 
+        if camera_id not in camera_status:
+            camera_status[camera_id] = {
+                'mode': 'UNKNOWN',
+                'is_on': False,
+                'timestamp': datetime.now(CARACAS_TIMEZONE),
+                'is_active': False 
+            }
+
+        camera_status[camera_id]['mode'] = new_mode
+        camera_status[camera_id]['is_on'] = new_is_on
+        camera_status[camera_id]['timestamp'] = datetime.now(CARACAS_TIMEZONE) 
+        camera_status[camera_id]['is_active'] = True 
+
+        app.logger.info(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {camera_status[camera_id]['mode']}, Power: {camera_status[camera_id]['is_on']}, Activa: {camera_status[camera_id]['is_active']}")
 
 
 # ---------------------- FIRESTORE USUARIOS --------------------------
