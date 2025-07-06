@@ -1,4 +1,5 @@
 import os
+import re
 from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify, Response
 from google.cloud import storage, firestore
 import paho.mqtt.client as mqtt # <-- ¡Añade esto para MQTT!
@@ -87,84 +88,30 @@ def on_mqtt_message_flask(client, userdata, msg):
 
     if topic.startswith("camera/status/"):
         camera_id = topic.split('/')[-1]
-        parts = payload.split(";")
 
-        mode_status = "UNKNOWN"
-        power_status = False # Por defecto a False (OFF)
+        # --- INICIO DE LA CORRECCIÓN CON REGEX ---
+        # Usamos regex para extraer los valores de forma segura, ignorando espacios.
+        # r'Modo:\s*([\w_]+)' busca "Modo:", luego cualquier espacio (\s*), y captura el nombre del modo.
+        mode_match = re.search(r'Modo:\s*([\w_]+)', payload)
+        # r'Power:\s*(ON|OFF)' busca "Power:", cualquier espacio, y captura ON u OFF.
+        power_match = re.search(r'Power:\s*(ON|OFF)', payload, re.IGNORECASE) # IGNORECASE por si acaso
 
-        for part in parts:
-            if part.startswith("Modo: "):
-                mode_status = part.replace("Modo: ", "").strip()
-            elif part.startswith("Power: "):
-                power_status_str = part.replace("Power: ", "").strip()
-                power_status = (power_status_str == "ON") # True si es "ON", False si es "OFF"
+        mode_status = mode_match.group(1) if mode_match else "UNKNOWN"
+        power_status_str = power_match.group(1) if power_match else "OFF"
+        
+        # Convertimos el string "ON" a un booleano True.
+        power_status = (power_status_str.upper() == "ON")
+        # --- FIN DE LA CORRECCIÓN ---
 
         with camera_status_lock:
-            # Asegurarse de mantener el modo existente si solo se actualiza el power, o viceversa
             current_cam_status = camera_status.get(camera_id, {})
-            current_cam_status['mode'] = mode_status # Actualizar modo
-            current_cam_status['is_on'] = power_status # <-- ¡NUEVO: Actualizar estado de encendido!
-            current_cam_status['timestamp'] = datetime.now() # Actualizar timestamp
-            camera_status[camera_id] = current_cam_status # Guardar el estado actualizado
+            current_cam_status['mode'] = mode_status
+            current_cam_status['is_on'] = power_status # ¡Ahora con el valor booleano correcto!
+            current_cam_status['timestamp'] = datetime.now()
+            camera_status[camera_id] = current_cam_status
 
+        # Este log ahora debería mostrar "Power: True" cuando corresponda.
         print(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {mode_status}, Power: {power_status}")
-
-flask_mqtt_client.on_connect = on_mqtt_connect_flask
-flask_mqtt_client.on_message = on_mqtt_message_flask # Añade la función on_message
-
-try:
-    flask_mqtt_client.connect(MQTT_BROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
-    flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado
-    print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar/suscribir.")
-except Exception as e:
-    print(f"MQTT (Flask): Error al conectar el cliente MQTT: {e}")
-
-def on_message(client, userdata, msg):
-    global camera_status 
-
-    topic = msg.topic
-    payload = msg.payload.decode('utf-8')
-    app.logger.info(f"MQTT (Flask): Mensaje recibido en '{topic}': {payload}")
-
-    # Extraer camera_id del tópico
-    match_id = re.match(r'camera/status/(.+)', topic)
-    if not match_id:
-        app.logger.warning(f"MQTT (Flask): Tópico no reconocido para estado de cámara: {topic}")
-        return
-
-    camera_id = match_id.group(1)
-
-    # Extraer Modo y Power del payload usando expresiones regulares
-    mode_match = re.search(r'Modo:\s*(\w+)', payload)
-    power_match = re.search(r'Power:\s*(\w+)', payload)
-
-    new_mode = mode_match.group(1) if mode_match else "UNKNOWN"
-    new_power_str = power_match.group(1) if power_match else None
-
-    # DEBUG_POWER_PARSE: Ver los valores intermedios
-    print(f"DEBUG_POWER_PARSE: Payload raw: '{payload}'") # Ver el payload completo
-    print(f"DEBUG_POWER_PARSE: new_mode extraido: '{new_mode}'")
-    print(f"DEBUG_POWER_PARSE: new_power_str extraido (antes de upper): '{new_power_str}'")
-
-    new_is_on = (new_power_str.upper() == 'ON') if new_power_str else False 
-
-    print(f"DEBUG_POWER_PARSE: new_is_on calculado: {new_is_on}") # DEBUG
-
-    with camera_status_lock: 
-        if camera_id not in camera_status:
-            camera_status[camera_id] = {
-                'mode': 'UNKNOWN',
-                'is_on': False,
-                'timestamp': datetime.now(CARACAS_TIMEZONE),
-                'is_active': False 
-            }
-
-        camera_status[camera_id]['mode'] = new_mode
-        camera_status[camera_id]['is_on'] = new_is_on
-        camera_status[camera_id]['timestamp'] = datetime.now(CARACAS_TIMEZONE) 
-        camera_status[camera_id]['is_active'] = True 
-
-        app.logger.info(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {camera_status[camera_id]['mode']}, Power: {camera_status[camera_id]['is_on']}, Activa: {camera_status[camera_id]['is_active']}")
 
 
 # ---------------------- FIRESTORE USUARIOS --------------------------
