@@ -9,6 +9,9 @@ import firebase_admin
 from firebase_admin import credentials, storage, messaging 
 from firebase_admin import firestore 
 import threading # Necesario para threading.Lock()
+import FaceNet
+import MTCNN
+import paho.mqtt.client as mqtt 
 
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara --
