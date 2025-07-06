@@ -705,6 +705,40 @@ def camera_control():
 
 # ------------------------ FIN API PARA CONTROLAR LA CÁMARA --------------------------
 
+# ------------------------ API PARA CONTROLAR EL ENCENDIDO/APAGADO DE LA CÁMARA --------------------------
+@app.route('/api/camera_power', methods=['POST'])
+@jwt_required()
+def camera_power():
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        camera_id = data.get('camera_id', None)
+        power_state = data.get('power_state', None) # 'ON' o 'OFF'
+
+        if not camera_id or power_state not in ['ON', 'OFF']:
+            return jsonify({"msg": "Faltan camera_id o estado de encendido/apagado válido ('ON'/'OFF')."}), 400
+
+        # Autenticación adicional: Verificar si current_user_email está autorizado para esta camera_id
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+        if not user_doc.exists or camera_id not in user_doc.to_dict().get('devices', []):
+            return jsonify({"msg": "Usuario no autorizado para esta cámara o cámara no encontrada."}), 403 # Forbidden
+
+        # Publicar el comando MQTT
+        mqtt_topic = f"camera/power/{camera_id}" # Nuevo tópico para control de encendido
+        mqtt_payload = power_state 
+
+        flask_mqtt_client.publish(mqtt_topic, payload=mqtt_payload, qos=MQTT_QOS_INTERNAL, retain=False)
+        print(f"MQTT (Flask): Comando de encendido '{power_state}' publicado a '{mqtt_topic}' para {camera_id} por {current_user_email}.")
+
+        return jsonify({"msg": f"Comando '{power_state}' enviado a la cámara {camera_id}."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error en camera_power: {e}")
+        return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
+
+# ------------------------ FIN API PARA CONTROLAR EL ENCENDIDO/APAGADO --------------------------
+
 # ------------------------ API PARA OBTENER EL ESTADO DE LA CÁMARA --------------------------
 @app.route('/api/camera_status/<string:camera_id>', methods=['GET'])
 @jwt_required()
