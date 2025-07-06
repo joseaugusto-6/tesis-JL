@@ -1,22 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-fi.py – Worker de SecurityCamApp (versión limpia)
--------------------------------------------------
-• Observa continuamente la carpeta **uploads/** de Firebase Storage.
-• Para cada imagen:
-    1. Detecta personas (YOLOv5‑Nano) y rostros (MTCNN + FaceNet).
-    2. Clasifica rostro (conocido / desconocido) comparando con embeddings.
-    3. Genera *eventos* y notificaciones FCM según reglas:
-        – known_person            → al menos 1 rostro conocido
-        – unknown_person          → 1 rostro desconocido
-        – unknown_group           → ≥2 rostros desconocidos
-        – unknown_person_repeat   → mismo desconocido ≥3 veces, cool‑down 30 s
-    4. Sube la imagen procesada (solo si hubo evento) a
-       alarmas_procesadas/ o alertas_grupales/.
-    5. Llama al backend Flask (`/api/events/add`) para llenar el Historial
-       de la app Flutter.
-    6. Borra siempre la imagen original.
+fi.py – Worker de SecurityCamApp (versión limpia + texto bonito)
+---------------------------------------------------------------
+• Observa uploads/, detecta personas y rostros, clasifica, notifica
+  y registra eventos en tu backend Flask para el Historial.
+• Añade rótulos claros a los recuadros:
+    – Rectángulo amarillo de YOLO + texto “Persona”.
+    – Rectángulo verde = conocido, rojo = desconocido, con texto más legible.
 """
 
 # ======== IMPORTS ========
@@ -30,10 +21,10 @@ import torch
 from mtcnn import MTCNN
 from keras_facenet import FaceNet
 
-import requests                         # → registrar eventos backend
+import requests
 import firebase_admin
 from firebase_admin import credentials, storage, messaging, firestore
-# ==========================
+# =========================
 
 # ======== CONFIG =========
 SERVICE_ACCOUNT_FILE = 'security-cam-f322b-firebase-adminsdk-fbsvc-a3bf0dd37b.json'
@@ -75,41 +66,46 @@ NAMES    = yolo.names
 # =========================
 
 # ===== UTILIDADES ========
+def draw_label(img, text, x, y, color_bg, color_txt=(255,255,255)):
+    """Dibuja un rectángulo de fondo + texto para mayor legibilidad."""
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.5
+    thick = 1
+    (w, h), _ = cv2.getTextSize(text, font, scale, thick)
+    cv2.rectangle(img, (x, y - h - 6), (x + w + 6, y), color_bg, -1)
+    cv2.putText(img, text, (x + 3, y - 3), font, scale, color_txt, thick, cv2.LINE_AA)
+
 
 def cargar_embeddings() -> tuple[list[np.ndarray], list[str]]:
-    """Descarga .npy de Storage y devuelve pares (embedding, label)."""
     embs, labels = [], []
     for b in bucket.list_blobs(prefix=PREF_EMBEDS):
-        if not b.name.endswith('.npy'):
-            continue
-        vec = np.load(io.BytesIO(b.download_as_bytes()), allow_pickle=True).item()
-        embs.extend(vec['embeddings'])
-        labels.extend([vec['name']] * len(vec['embeddings']))
+        if b.name.endswith('.npy'):
+            vec = np.load(io.BytesIO(b.download_as_bytes()),
+                          allow_pickle=True).item()
+            embs.extend(vec['embeddings'])
+            labels.extend([vec['name']] * len(vec['embeddings']))
     print(f'[INFO] embeddings cargados: {len(embs)}')
     return embs, labels
 
 
-def send_fcm(owner: str, title: str, body: str,
-             image_url: str | None, data: dict):
-    """Push a cada token FCM del usuario."""
+def send_fcm(owner, title, body, image_url, data):
     try:
         doc = db.collection('usuarios').document(owner).get()
         if not doc.exists:
             print(f'[WARN] usuario {owner} sin doc/tokens')
             return
         for t in doc.to_dict().get('fcm_tokens', []):
-            msg = messaging.Message(
+            messaging.send(messaging.Message(
                 token=t,
-                notification=messaging.Notification(title=title, body=body, image=image_url),
-                data=data,
-            )
-            messaging.send(msg)
+                notification=messaging.Notification(title=title,
+                                                    body=body,
+                                                    image=image_url),
+                data=data))
     except Exception as e:
         print(f'[WARN] FCM error: {e}')
 
 
-def registrar_evento(ev: dict):
-    """POST al backend para que aparezca en Historial."""
+def registrar_evento(ev):
     try:
         r = requests.post(f'{MAIN3_API_BASE_URL}/events/add', json=ev, timeout=5)
         if r.status_code not in (200, 201):
@@ -118,11 +114,11 @@ def registrar_evento(ev: dict):
         print(f'[WARN] registrar_evento: {e}')
 # =========================
 
-# =========== LOOP =========
 
+# =========== LOOP =========
 def main():
     last_emb, known_embs, known_labels = 0, [], []
-    history: list[dict] = []  # memoria 60 s de desconocidos
+    history = []  # [{emb,count,last}]
 
     while True:
         now = time.time()
@@ -133,22 +129,19 @@ def main():
         blobs = [b for b in bucket.list_blobs(prefix=PREF_UPLOADS)
                  if not b.name.endswith('/')]
         if not blobs:
-            time.sleep(5)
-            continue
+            time.sleep(5); continue
 
         for blob in blobs:
-            nombre = os.path.basename(blob.name)
+            nombre    = os.path.basename(blob.name)
             device_id = nombre.split('_')[0] if '_' in nombre else 'unknown'
 
-            # Owner
             owner_snap = next(db.collection('usuarios')
-                               .where('devices', 'array_contains', device_id)
+                               .where('devices','array_contains',device_id)
                                .limit(1).stream(), None)
             owner_id = owner_snap.id if owner_snap else None
             if not owner_id:
                 blob.delete(); continue
 
-            # Leer imagen
             img_np = np.frombuffer(blob.download_as_bytes(), np.uint8)
             img    = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
             if img is None:
@@ -162,88 +155,107 @@ def main():
                 if conf < 0.5 or NAMES[int(cls)] != 'person':
                     continue
                 x, y, w, h = map(int, xywh)
-                personas.append((x - w//2, y - h//2, w, h))
-                cv2.rectangle(img, (x - w//2, y - h//2),
-                              (x + w//2, y + h//2), (0,255,255), 2)
+                px, py = x - w//2, y - h//2
+                personas.append((px, py, w, h))
+                cv2.rectangle(img, (px, py), (px+w, py+h), (0,255,255), 2)
+                draw_label(img, 'Persona', px, py, (0,255,255))
 
             # --- Rostros ---
             faces = detector.detect_faces(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
             unknowns, known_set = [], set()
+
             for f in faces:
                 x,y,w,h = [abs(int(v)) for v in f['box']]
                 if w<30 or h<30: continue
-                face_rgb = cv2.resize(cv2.cvtColor(img[y:y+h,x:x+w], cv2.COLOR_BGR2RGB),(160,160))
+                face_rgb = cv2.resize(
+                    cv2.cvtColor(img[y:y+h,x:x+w], cv2.COLOR_BGR2RGB), (160,160))
                 emb = embedder.embeddings(np.expand_dims(face_rgb,0))[0]
 
                 name, best = 'Desconocido', 1.0
-                for kvec, kname in zip(known_embs, known_labels):
-                    d = cosine(emb, kvec)
+                for kv, kn in zip(known_embs, known_labels):
+                    d = cosine(emb, kv)
                     if d < best:
-                        best, name = d, kname if d < DIST_THRESHOLD else 'Desconocido'
+                        best = d
+                        if d < DIST_THRESHOLD:
+                            name = kn
+                            break
+
                 color = (0,255,0) if name!='Desconocido' else (0,0,255)
                 cv2.rectangle(img,(x,y),(x+w,y+h),color,2)
-                cv2.putText(img,name,(x,y-5),cv2.FONT_HERSHEY_SIMPLEX,0.6,color,2)
+                draw_label(img, name, x, y, color)
 
                 if name=='Desconocido':
                     if any(px<x<px+pw and py<y<py+ph for px,py,pw,ph in personas):
-                        unknowns.append({'emb':emb})
+                        unknowns.append({'emb': emb})
                 else:
                     known_set.add(name)
 
-            # --- reglas de evento ---
+            # --- Reglas de evento ---
             evento, title, body = None, '', ''
             is_group = len(unknowns) >= 2
 
             if known_set:
-                personas = ', '.join(sorted(known_set))
-                title, body = 'Persona conocida detectada', f'{personas} en cámara {device_id}.'
-                evento = {'person_name': personas,'event_type':'known_person'}
+                personas_txt = ', '.join(sorted(known_set))
+                title = 'Persona conocida detectada'
+                body  = f'{personas_txt} en cámara {device_id}.'
+                evento = {'person_name': personas_txt, 'event_type': 'known_person'}
 
             if unknowns and len(unknowns)==1:
-                title, body = 'Persona desconocida detectada', f'Rostro no identificado en {device_id}.'
-                evento = {'person_name':'Desconocido','event_type':'unknown_person'}
+                title = 'Persona desconocida detectada'
+                body  = f'Rostro no identificado en {device_id}.'
+                evento = {'person_name': 'Desconocido',
+                          'event_type': 'unknown_person'}
 
             if is_group:
-                title, body = '¡ALERTA GRUPAL!', f'{len(unknowns)} desconocidos en {device_id}.'
-                evento = {'person_name':'Desconocidos (Grupo)','event_type':'unknown_group'}
+                title = '¡ALERTA GRUPAL!'
+                body  = f'{len(unknowns)} desconocidos en {device_id}.'
+                evento = {'person_name': 'Desconocidos (Grupo)',
+                          'event_type': 'unknown_group'}
 
-            # rostro repetido lógica
+            # --- Repetición de desconocido ---
             if evento and evento['event_type']=='unknown_person':
                 emb = unknowns[0]['emb']
-                repetido=False
-                for h in history:
-                    if cosine(emb,h['emb'])<SIM_THRESHOLD:
-                        h['count']+=1; repetido=True
-                        if h['count']>=REPEAT_THRESHOLD and (utc_now-h['last']).total_seconds()>COOLDOWN_SECONDS:
+                rep=False
+                for hst in history:
+                    if cosine(emb,hst['emb']) < SIM_THRESHOLD:
+                        rep=True
+                        hst['count']+=1
+                        if (hst['count']>=REPEAT_THRESHOLD and
+                            (utc_now-hst['last']).total_seconds()>COOLDOWN_SECONDS):
                             title='Desconocido recurrente'
                             body=f'Rostro desconocido repetido en {device_id}.'
                             evento['event_type']='unknown_person_repeat'
-                            h['last']=utc_now
+                            hst['last']=utc_now
                         break
-                if not repetido:
+                if not rep:
                     history.append({'emb':emb,'count':1,'last':utc_now})
-                history[:] = [h for h in history if (utc_now-h['last']).total_seconds()<60]
+                history[:] = [h for h in history
+                              if (utc_now-h['last']).total_seconds()<60]
 
-            # --- subir imagen procesada & notificar ---
+            # --- Subir imagen procesada & notificar ---
             img_url=None
             if evento:
-                ok,buff = cv2.imencode('.jpg',img)
+                ok,buff = cv2.imencode('.jpg', img)
                 if ok:
-                    dest = (PREF_GROUPS if is_group else PREF_PROCESSED)+nombre.replace('.jpg','_proc.jpg')
-                    out = bucket.blob(dest)
-                    out.upload_from_string(buff.tobytes(),content_type='image/jpeg')
-                    out.make_public(); img_url=out.public_url
-                # completar evento dict
+                    pref = PREF_GROUPS if is_group else PREF_PROCESSED
+                    out_blob = bucket.blob(pref + nombre.replace('.jpg','_proc.jpg'))
+                    out_blob.upload_from_string(buff.tobytes(),
+                                                content_type='image/jpeg')
+                    out_blob.make_public()
+                    img_url = out_blob.public_url
+
                 evento.update({
-                    'timestamp': utc_now.isoformat(),
-                    'device_id': device_id,
-                    'image_url': img_url,
+                    'timestamp'    : utc_now.isoformat(),
+                    'device_id'    : device_id,
+                    'image_url'    : img_url,
                     'event_details': body,
                 })
-                # notificación + registro
-                send_fcm(owner_id,title,body,img_url,{'event_type':evento['event_type'],'device_id':device_id})
+                send_fcm(owner_id, title, body, img_url,
+                         {'event_type': evento['event_type'],
+                          'device_id' : device_id})
                 registrar_evento(evento)
 
+            # --- Limpieza ---
             blob.delete()
 
         time.sleep(3)
