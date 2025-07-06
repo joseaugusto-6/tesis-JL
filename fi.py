@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 import firebase_admin 
 from firebase_admin import credentials, storage, messaging 
 from firebase_admin import firestore 
+import threading
 
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara --
