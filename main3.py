@@ -974,5 +974,57 @@ def get_latest_alert():
         return jsonify({"msg": "Error interno del servidor al obtener la última alerta."}), 500
 # =======================================================================================
 
+# ======================== API PARA AJUSTES DE USUARIO ========================
+
+@app.route('/api/user/settings', methods=['GET'])
+@jwt_required()
+def get_user_settings():
+    """Devuelve las configuraciones de un usuario, como sus preferencias de notificación."""
+    try:
+        current_user_email = get_jwt_identity()
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            return jsonify({"msg": "Usuario no encontrado."}), 404
+        
+        user_data = user_doc.to_dict()
+        
+        # Devolvemos la preferencia, o 'all' si no existe en la base de datos
+        settings = {
+            'notification_preference': user_data.get('notification_preference', 'all')
+        }
+        
+        return jsonify(settings), 200
+    except Exception as e:
+        app.logger.error(f"Error al obtener ajustes para {current_user_email}: {e}")
+        return jsonify({"msg": "Error interno del servidor."}), 500
+
+
+@app.route('/api/user/settings', methods=['POST'])
+@jwt_required()
+def update_user_settings():
+    """Actualiza las configuraciones de un usuario."""
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        new_preference = data.get('notification_preference')
+
+        # Validamos que la opción enviada sea una de las permitidas
+        if new_preference not in ['all', 'alerts_only']:
+            return jsonify({"msg": "Preferencia de notificación inválida."}), 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc_ref.update({
+            'notification_preference': new_preference
+        })
+
+        return jsonify({"msg": "Ajustes guardados correctamente."}), 200
+    except Exception as e:
+        app.logger.error(f"Error al actualizar ajustes para {current_user_email}: {e}")
+        return jsonify({"msg": "Error interno del servidor."}), 500
+
+# =======================================================================================
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
