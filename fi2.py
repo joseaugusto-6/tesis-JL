@@ -285,18 +285,40 @@ def main():
                     'image_url'    : img_url,
                     'event_details': body,
                 })
+                 # 1. Obtenemos la preferencia del usuario del documento que ya tenemos
+                user_settings = owner_snap.to_dict()
+                notification_preference = user_settings.get('notification_preference', 'all')
+                
+                # 2. Definimos qué es una alerta
+                is_critical_alert = evento['event_type'] in [
+                    'unknown_person', 
+                    'unknown_person_repeated_alarm', 
+                    'unknown_group',
+                    'person_no_face_alarm',
+                    'alarm'
+                ]
+                # 3. Decidimos si enviar la notificación basándonos en la preferencia
+                should_send_fcm = False
+                if notification_preference == 'all':
+                    should_send_fcm = True
+                elif notification_preference == 'alerts_only' and is_critical_alert:
+                    should_send_fcm = True
 
-                # 1. Creamos un diccionario con todos los datos para la notificación
-                event_data_for_fcm = {
-                  'title': title,
-                  'body': body,
-                  'image_url': img_url,
-                  'event_type': evento['event_type'],
-                  'device_id': device_id
-                }
-
-                # 2. Hacemos la llamada correcta con solo 2 argumentos: el email y el diccionario
-                send_fcm(owner_id, event_data_for_fcm)
+                # 4. Si la decisión es enviar, preparamos los datos y llamamos a send_fcm
+                if should_send_fcm:
+                    print(f"[INFO] La preferencia del usuario es '{notification_preference}'. Enviando notificación...")
+                    event_data_for_fcm = {
+                        'title': title,
+                        'body': body,
+                        'image_url': img_url,
+                        'event_type': evento['event_type'],
+                        'device_id': device_id
+                    }
+                    send_fcm(owner_id, event_data_for_fcm)
+                else:
+                    # Si no, simplemente lo registramos en el log y no hacemos nada más
+                    print(f"[INFO] La preferencia del usuario es '{notification_preference}'. Notificación para evento '{evento['event_type']}' suprimida.")
+                
                 registrar_evento(evento)
 
             blob.delete()
