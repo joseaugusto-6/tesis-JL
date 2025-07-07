@@ -792,5 +792,58 @@ def get_camera_status(camera_id):
 
 # ------------------------ FIN API PARA OBTENER EL ESTADO DE LA CÁMARA --------------------
 
+# ------------------------ API PARA RECIBIR FOTOS DE REGISTRO FACIAL --------------------
+@app.route('/api/upload_registration_images', methods=['POST'])
+@jwt_required()
+def upload_registration_images():
+    """
+    Recibe un lote de imágenes desde la app móvil para el registro facial de un usuario.
+    Guarda las imágenes en una carpeta temporal en Firebase Storage para ser procesadas por un worker.
+    """
+    try:
+        # 1. Identificar al usuario a través del token JWT
+        current_user_email = get_jwt_identity()
+        app.logger.info(f"Solicitud de registro de rostro recibida para: {current_user_email}")
+
+        # 2. Verificar que los archivos de imagen fueron enviados
+        if 'images' not in request.files:
+            return jsonify({"msg": "Petición inválida: no se encontraron archivos con la clave 'images'."}), 400
+
+        images = request.files.getlist('images')
+
+        if not images or all(img.filename == '' for img in images):
+            return jsonify({"msg": "No se enviaron archivos de imagen."}), 400
+
+        # 3. Crear una ruta de almacenamiento única y temporal para este lote de imágenes
+        # Sanitizamos el email para usarlo como nombre de carpeta
+        user_email_safe = "".join([c for c in current_user_email if c.isalnum() or c in ('_', '-')])
+        
+        # Creamos un ID único para este lote para evitar sobreescribir
+        batch_id = str(uuid.uuid4())
+        
+        # La ruta base donde el worker buscará nuevos trabajos
+        base_storage_path = f"face_registration_pending/{user_email_safe}/{batch_id}/"
+
+        # 4. Subir cada imagen a la carpeta temporal en Firebase Storage
+        for image in images:
+            # NOTA: Usamos el nombre de archivo original que envía la app
+            blob_path = f"{base_storage_path}{image.filename}"
+            blob = bucket.blob(blob_path)
+            
+            # Subimos el flujo de bytes directamente sin guardarlo en el disco de la VM
+            blob.upload_from_file(image.stream, content_type=image.content_type)
+
+        app.logger.info(f"Se guardaron {len(images)} imágenes para {current_user_email} en el lote {batch_id}. Esperando procesamiento del worker.")
+
+        # 5. Devolver una respuesta exitosa a la app
+        return jsonify({"msg": f"Se recibieron {len(images)} imágenes correctamente. Serán procesadas en breve."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error crítico al subir imágenes de registro para {current_user_email}: {e}")
+        import traceback
+        traceback.print_exc() # Imprime el error completo en el log para debugging
+        return jsonify({"msg": "Error interno en el servidor al guardar las imágenes."}), 500
+# --------------------------------------------------------------------------------------------
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
