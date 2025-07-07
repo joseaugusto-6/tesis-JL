@@ -139,7 +139,8 @@ def firestore_create_user(name, email, password):
         "password_hash": password_hash,
         "created_at": firestore.SERVER_TIMESTAMP,
         "devices": [], # Inicializa con una lista vacía de dispositivos
-        "fcm_tokens": [] # Inicializa con una lista vacía de tokens FCM
+        "fcm_tokens": [], # Inicializa con una lista vacía de tokens FCM
+        "notification_preference": "all" 
     })
 
 def firestore_check_user(email, password):
