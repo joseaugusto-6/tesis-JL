@@ -366,6 +366,7 @@ def get_event_history():
         events = []
         for doc in events_ref.stream():
             event_data = doc.to_dict()
+            event_data['id'] = doc.id
             if isinstance(event_data.get('timestamp'), datetime):
                 event_data['timestamp'] = event_data['timestamp'].isoformat()
             elif hasattr(event_data.get('timestamp'), 'isoformat'):
@@ -956,6 +957,7 @@ def get_latest_alert():
         
         if latest_alert_doc:
             alert_data = latest_alert_doc.to_dict()
+            alert_data['id'] = latest_alert_doc.id
             # Aseguramos que el timestamp sea un string en formato ISO para JSON
             if 'timestamp' in alert_data and isinstance(alert_data['timestamp'], datetime):
                 alert_data['timestamp'] = alert_data['timestamp'].isoformat()
