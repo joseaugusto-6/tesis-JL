@@ -11,7 +11,8 @@ import threading
 import time 
 import queue 
 import base64 
-import uuid # Para generar tokens de sesión de stream
+import uuid 
+import json # Para generar tokens de sesión de stream
 
 # Inicializaciones básicas
 app = Flask(__name__)

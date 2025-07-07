@@ -7,6 +7,7 @@ import paho.mqtt.client as mqtt # <-- ¡Añade esto para MQTT!
 from datetime import datetime, timezone, timedelta # Para timestamps en Firebase
 import firebase_admin # Para Firebase Admin SDK
 from firebase_admin import credentials, storage # Para autenticación y Storage
+import uuid 
 
 # ========== CONFIGURACIÓN GLOBAL ==========
 # -- Configuración de la Cámara --
