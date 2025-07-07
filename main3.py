@@ -824,6 +824,21 @@ def upload_registration_images():
         # La ruta base donde el worker buscará nuevos trabajos
         base_storage_path = f"face_registration_pending/{user_email_safe}/{batch_id}/"
 
+        # --- NUEVO: RECIBIR EL NOMBRE DE LA PERSONA ---
+        person_name = request.form.get('person_name', 'desconocido')
+        if not person_name:
+            return jsonify({"msg": "Falta el nombre de la persona a registrar."}), 400
+
+        # ... (código existente para crear la ruta base_storage_path) ...
+
+        # --- NUEVO: GUARDAR EL NOMBRE EN UN ARCHIVO DE METADATOS ---
+        metadata = {'person_name': person_name, 'user_email': current_user_email}
+        metadata_blob_path = f"{base_storage_path}metadata.json"
+        bucket.blob(metadata_blob_path).upload_from_string(
+            json.dumps(metadata), # import json si no está
+            content_type='application/json'
+        )
+
         # 4. Subir cada imagen a la carpeta temporal en Firebase Storage
         for image in images:
             # NOTA: Usamos el nombre de archivo original que envía la app
