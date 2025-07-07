@@ -57,7 +57,7 @@ print('[OK] Firebase inicializado')
 # ====== MODELOS ==========
 detector = MTCNN()
 embedder = FaceNet()
-yolo     = torch.hub.load('ultralytics/yolov5', 'yolov5n', trust_repo=True)
+yolo     = torch.hub.load('ultralytics/yolov5', 'yolov5x', trust_repo=True)
 NAMES    = yolo.names
 # =========================
 
@@ -285,7 +285,7 @@ def main():
                     'image_url'    : img_url,
                     'event_details': body,
                 })
-                
+
                 # 1. Creamos un diccionario con todos los datos para la notificación
                 event_data_for_fcm = {
                   'title': title,
