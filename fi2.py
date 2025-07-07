@@ -285,9 +285,17 @@ def main():
                     'image_url'    : img_url,
                     'event_details': body,
                 })
-                send_fcm(owner_id, title, body, img_url,
-                         {'event_type': evento['event_type'],
-                          'device_id' : device_id})
+         # 1. Creamos un diccionario con todos los datos para la notificación
+          event_data_for_fcm = {
+              'title': title,
+              'body': body,
+              'image_url': img_url,
+              'event_type': evento['event_type'],
+              'device_id': device_id
+          }
+
+          # 2. Hacemos la llamada correcta con solo 2 argumentos: el email y el diccionario
+          send_fcm(owner_id, event_data_for_fcm)
                 registrar_evento(evento)
 
             blob.delete()
