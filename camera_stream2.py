@@ -229,8 +229,26 @@ def main():
     client_mqtt_instance.on_connect = on_connect
     client_mqtt_instance.on_message = on_message
 
+    # 1. Define el mensaje de "última voluntad". Será el estado 'OFF'.
+    # Usamos el modo actual por si acaso, pero lo importante es el Power: OFF.
+    lwt_payload = f"Modo: {current_mode}; Power: OFF" 
+
+    # 2. Configura el testamento en el cliente MQTT.
+    # Esto le dice al broker qué publicar si la conexión se pierde.
+    client_mqtt_instance.will_set(
+        MQTT_STATUS_TOPIC,      # El tópico donde se publicará
+        payload=lwt_payload,    # El mensaje a publicar
+        qos=1,                  # Calidad de servicio
+        retain=True             # Importante: que el estado 'OFF' también se retenga
+    )
+
+
+
     try:
-        client_mqtt_instance.connect(MQTT_BROKER_IP, MQTT_BROKER_PORT, 60)
+         # 3. Conéctate con un intervalo de 'keepalive' más corto.
+        # keepalive=10 significa que el cliente enviará un "latido" cada 10s.
+        # El broker detectará la desconexión después de 1.5 * 10 = ~15 segundos.
+        client_mqtt_instance.connect(MQTT_BROKER_IP, MQTT_BROKER_PORT, keepalive=10)
         client_mqtt_instance.loop_start() 
         print("MQTT: Cliente iniciado en un hilo separado.")
 
