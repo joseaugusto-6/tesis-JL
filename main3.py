@@ -861,5 +861,57 @@ def upload_registration_images():
         return jsonify({"msg": "Error interno en el servidor al guardar las imágenes."}), 500
 # --------------------------------------------------------------------------------------------
 
+# ======================== API PARA LIMPIAR HISTORIAL DE EVENTOS ========================
+@app.route('/api/events/clear_history', methods=['DELETE'])
+@jwt_required()
+def clear_event_history():
+    """
+    Elimina TODOS los eventos asociados a los dispositivos de un usuario.
+    Usa un proceso por lotes para ser más eficiente con Firestore.
+    """
+    try:
+        current_user_email = get_jwt_identity()
+        app.logger.info(f"Solicitud para limpiar historial recibida de {current_user_email}")
+
+        # 1. Obtenemos los dispositivos del usuario para saber qué eventos borrar
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+        if not user_doc.exists:
+            return jsonify({"msg": "Usuario no encontrado."}), 404
+        
+        user_devices = user_doc.to_dict().get('devices', [])
+        
+        # Si el usuario no tiene dispositivos, no hay nada que borrar
+        if not user_devices:
+            return jsonify({"msg": "El usuario no tiene dispositivos, no hay nada que borrar."}), 200
+
+        # 2. Preparamos la consulta para encontrar todos los eventos relevantes
+        events_query = db.collection('events').where('device_id', 'in', user_devices)
+        docs_to_delete = events_query.stream()
+        
+        # 3. Usamos un lote (batch) para eliminar eficientemente
+        batch = db.batch()
+        deleted_count = 0
+        for doc in docs_to_delete:
+            batch.delete(doc.reference)
+            deleted_count += 1
+            # Firestore recomienda lotes de máximo 500 operaciones. Hacemos commit y empezamos uno nuevo.
+            if deleted_count % 499 == 0:
+                batch.commit()
+                batch = db.batch()
+        
+        # Hacemos commit del último lote (que puede tener menos de 500 documentos)
+        batch.commit()
+        
+        app.logger.info(f"Se eliminaron {deleted_count} eventos para el usuario {current_user_email}.")
+        return jsonify({"msg": f"Historial eliminado correctamente. Se borraron {deleted_count} eventos."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al limpiar historial para {current_user_email}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"msg": "Error interno del servidor al limpiar el historial."}), 500
+# =======================================================================================
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
