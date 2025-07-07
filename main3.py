@@ -913,5 +913,64 @@ def clear_event_history():
         return jsonify({"msg": "Error interno del servidor al limpiar el historial."}), 500
 # =======================================================================================
 
+# ======================== API PARA OBTENER LA ÚLTIMA ALERTA CRÍTICA ========================
+@app.route('/api/latest_alert', methods=['GET'])
+@jwt_required()
+def get_latest_alert():
+    """
+    Busca y devuelve el evento de alerta más reciente (persona desconocida, alarma, etc.)
+    asociado a los dispositivos de un usuario.
+    """
+    try:
+        current_user_email = get_jwt_identity()
+
+        # 1. Obtenemos los dispositivos del usuario
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+        if not user_doc.exists:
+            return jsonify({"msg": "Usuario no encontrado."}), 404
+        
+        user_devices = user_doc.to_dict().get('devices', [])
+        if not user_devices:
+            return jsonify({"latest_alert": None}), 200 # No hay dispositivos, por tanto no hay alertas
+
+        # 2. Definimos qué tipos de eventos consideramos una "alerta crítica"
+        critical_event_types = [
+            'unknown_person', 
+            'unknown_person_repeated_alarm', 
+            'unknown_group',
+            'person_no_face_alarm',
+            'alarm' # Un tipo de alarma genérico si lo tuvieras
+        ]
+
+        # 3. Hacemos la consulta a Firestore
+        alert_query = db.collection('events').where('device_id', 'in', user_devices) \
+                                              .where('event_type', 'in', critical_event_types) \
+                                              .order_by('timestamp', direction=firestore.Query.DESCENDING) \
+                                              .limit(1) # ¡Solo queremos la más reciente!
+        
+        results = alert_query.stream()
+        
+        # 4. Procesamos el resultado
+        latest_alert_doc = next(results, None)
+        
+        if latest_alert_doc:
+            alert_data = latest_alert_doc.to_dict()
+            # Aseguramos que el timestamp sea un string en formato ISO para JSON
+            if 'timestamp' in alert_data and isinstance(alert_data['timestamp'], datetime):
+                alert_data['timestamp'] = alert_data['timestamp'].isoformat()
+            
+            return jsonify({"latest_alert": alert_data}), 200
+        else:
+            # Si no se encontraron alertas, devolvemos null
+            return jsonify({"latest_alert": None}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al obtener última alerta para {current_user_email}: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"msg": "Error interno del servidor al obtener la última alerta."}), 500
+# =======================================================================================
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
