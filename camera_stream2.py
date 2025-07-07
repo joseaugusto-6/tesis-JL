@@ -64,7 +64,6 @@ except Exception as e:
     print("La subida de imágenes a Storage no funcionará.")
     # No salir, permitir que al menos el stream_upload a VM funcione
 
-
 # ========== FUNCIÓN DE CALLBACK MQTT ==========
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
@@ -78,6 +77,13 @@ def on_connect(client, userdata, flags, rc):
         print(f"MQTT: Estado inicial publicado: {status_payload}")
     else:
         print(f"MQTT: Falló la conexión, código de retorno {rc}\n")
+
+# ============== FUNCIÓN PARA RECONEXIÓN AUTOMÁTICA =========== 
+def on_disconnect(client, userdata, rc):
+    if rc != 0:
+        print("¡Conexión perdida de forma inesperada! Intentando reconectar automáticamente...")
+
+#================ FUNCIÓN PARA ENCENDIDO/APAGADO =================
 def on_message(client, userdata, msg):
     global current_mode, is_camera_on # Para modificar la variable global
     command = msg.payload.decode("utf-8")
@@ -183,7 +189,7 @@ def camera_operation_loop(mqtt_client):
                         response.raise_for_status() 
                         # print(f"Streaming: Frame enviado a VM. Respuesta: {response.status_code}")
                     except requests.exceptions.RequestException as req_e:
-                        print(f"❌ Streaming: Error al enviar frame a VM: {req_e}")
+                        print(f"Streaming: Error al enviar frame a VM: {req_e}")
                     time.sleep(1.0 / CAMERA_FPS) 
 
                 elif current_mode == "CAPTURE_MODE":
@@ -224,46 +230,54 @@ def camera_operation_loop(mqtt_client):
 
 # ========== FUNCIÓN DE INICIO ==========
 def main():
-    # Inicializar el cliente MQTT
-    client_mqtt_instance = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True) # Renombrado para evitar confusión
+    # 1. Configuración inicial del cliente MQTT
+    client_mqtt_instance = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
     client_mqtt_instance.on_connect = on_connect
     client_mqtt_instance.on_message = on_message
+    client_mqtt_instance.on_disconnect = on_disconnect # Importante para la reconexión
 
-    # 1. Define el mensaje de "última voluntad". Será el estado 'OFF'.
-    # Usamos el modo actual por si acaso, pero lo importante es el Power: OFF.
-    lwt_payload = f"Modo: {current_mode}; Power: OFF" 
+    # 2. Bucle de reconexión inicial
+    # Este bucle se asegura de que el script no se cierre si el servidor no está disponible.
+    while True:
+        try:
+            print("Intentando conectar al broker MQTT...")
+            
+            # Configura el "Last Will" ANTES de intentar conectar.
+            lwt_payload = f"Modo: {current_mode}; Power: OFF" 
+            client_mqtt_instance.will_set(MQTT_STATUS_TOPIC, payload=lwt_payload, qos=1, retain=True)
+            
+            # Intenta la conexión con un keepalive de 10 segundos
+            client_mqtt_instance.connect(MQTT_BROKER_IP, MQTT_BROKER_PORT, keepalive=10)
+            
+            # Si la conexión tiene éxito, imprimimos un mensaje y rompemos el bucle
+            print("¡Conectado exitosamente al broker MQTT!")
+            break 
+            
+        except Exception as e:
+            # Si la conexión falla, esperamos 10 segundos y el bucle reintentará
+            print(f"Fallo al conectar: {e}. Reintentando en 10 segundos...")
+            time.sleep(10)
 
-    # 2. Configura el testamento en el cliente MQTT.
-    # Esto le dice al broker qué publicar si la conexión se pierde.
-    client_mqtt_instance.will_set(
-        MQTT_STATUS_TOPIC,      # El tópico donde se publicará
-        payload=lwt_payload,    # El mensaje a publicar
-        qos=1,                  # Calidad de servicio
-        retain=True             # Importante: que el estado 'OFF' también se retenga
-    )
+    # 3. Iniciar el bucle de red de MQTT en un hilo separado
+    # Esto se ejecuta solo después de que la conexión inicial fue exitosa.
+    client_mqtt_instance.loop_start()
+    print("MQTT: Cliente iniciado y escuchando en segundo plano.")
 
-
-
+    # 4. Ejecución del bucle principal de la cámara
+    # Lo protegemos con try/except para asegurar un cierre limpio.
     try:
-         # 3. Conéctate con un intervalo de 'keepalive' más corto.
-        # keepalive=10 significa que el cliente enviará un "latido" cada 10s.
-        # El broker detectará la desconexión después de 1.5 * 10 = ~15 segundos.
-        client_mqtt_instance.connect(MQTT_BROKER_IP, MQTT_BROKER_PORT, keepalive=10)
-        client_mqtt_instance.loop_start() 
-        print("MQTT: Cliente iniciado en un hilo separado.")
-
-        # ¡CAMBIO CLAVE AQUÍ! Pasa la instancia del cliente a la función de operación de cámara
-        camera_operation_loop(client_mqtt_instance) 
-
+        camera_operation_loop(client_mqtt_instance)
+    except KeyboardInterrupt:
+        # Permite detener el programa limpiamente con Ctrl+C
+        print("\nPrograma detenido por el usuario.")
     except Exception as e:
-        print(f"Error en la ejecución principal: {e}")
+        print(f"Error crítico en el bucle principal de la cámara: {e}")
     finally:
-        if 'client_mqtt_instance' in locals() and client_mqtt_instance.is_connected():
-            client_mqtt_instance.loop_stop()
-            client_mqtt_instance.disconnect()
-            print("MQTT: Cliente desconectado.")
-        else:
-            print("MQTT: Cliente no se conectó o ya estaba desconectado.")
+        # Este bloque se ejecuta siempre al final, asegurando que todo se cierre.
+        print("Finalizando el programa...")
+        client_mqtt_instance.loop_stop()
+        client_mqtt_instance.disconnect()
+        print("MQTT: Cliente desconectado y programa finalizado.")
 
 if __name__ == '__main__':
     main()

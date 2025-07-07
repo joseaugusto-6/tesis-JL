@@ -20,7 +20,7 @@ from keras_facenet import FaceNet
 
 import requests
 import firebase_admin
-from firebase_admin import credentials, storage, messaging, firestore
+from firebase_admin import credentials, initialize_app, storage, messaging, firestore
 # =========================
 
 # ======== CONFIG =========
@@ -86,20 +86,52 @@ def cargar_embeddings():
     return embs, labels
 
 
-def send_fcm(owner, title, body, image_url, data):
+def send_fcm(user_email, event_data):
+    user_doc_ref = db.collection('usuarios').document(user_email)
     try:
-        doc = db.collection('usuarios').document(owner).get()
-        if not doc.exists:
+        user_doc = user_doc_ref.get()
+        if not user_doc.exists:
+            print(f"[ERROR] FCM: No se encontró el documento del usuario: {user_email}")
             return
-        for t in doc.to_dict().get('fcm_tokens', []):
-            messaging.send(messaging.Message(
-                token=t,
-                notification=messaging.Notification(title=title,
-                                                    body=body,
-                                                    image=image_url),
-                data=data))
     except Exception as e:
-        print(f'[WARN] FCM: {e}')
+        print(f"[ERROR] FCM: No se pudo obtener el documento del usuario: {e}")
+        return
+
+    fcm_tokens = user_doc.to_dict().get('fcm_tokens', [])
+    if not fcm_tokens:
+        print(f"[INFO] FCM: El usuario {user_email} no tiene tokens FCM registrados.")
+        return
+
+    # Creamos una copia de la lista para iterar, por si la modificamos durante el bucle
+    for token in list(fcm_tokens):
+        try:
+            message = messaging.Message(
+                token=token,
+                notification=messaging.Notification(
+                    title=event_data['title'],
+                    body=event_data['body'],
+                ),
+                android=messaging.AndroidConfig(priority='high'),
+                data={'image_url': event_data.get('image_url', '')}
+            )
+            messaging.send(message)
+            print(f"[SUCCESS] FCM: Notificación enviada exitosamente al token que termina en ...{token[-6:]}")
+
+        except messaging.UnregisteredError:
+            # ESTE ES EL CASO: El token es inválido porque la app fue desinstalada o los datos borrados.
+            print(f"[CLEANUP] FCM: Token inválido detectado (...{token[-6:]}). Eliminándolo de la base de datos.")
+            try:
+                # Usamos ArrayRemove para eliminar el token específico de la lista en Firestore.
+                user_doc_ref.update({
+                    'fcm_tokens': firestore.ArrayRemove([token])
+                })
+                print(f"[SUCCESS] FCM: Token inválido eliminado para el usuario {user_email}.")
+            except Exception as e:
+                print(f"[ERROR] FCM: Fallo al intentar eliminar el token inválido: {e}")
+
+        except Exception as e:
+            # Captura cualquier otro tipo de error (ej. de red) sin eliminar el token.
+            print(f"[WARN] FCM: Fallo al enviar al token ...{token[-6:]} por otra razón. Error: {e}")
 
 
 def registrar_evento(ev):
