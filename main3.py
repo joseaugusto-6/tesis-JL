@@ -1034,6 +1034,7 @@ def update_user_settings():
 # ======================== API PARA RESUMEN DEL PERFIL DE USUARIO ========================
 @app.route('/api/user/profile_summary', methods=['GET'])
 @jwt_required()
+
 def get_profile_summary():
     """Recoge y devuelve un resumen de la cuenta, incluyendo los nombres de los rostros registrados."""
     try:
