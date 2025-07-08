@@ -245,7 +245,7 @@ def main():
                 img_np = np.frombuffer(blob.download_as_bytes(), np.uint8)
                 img = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
 
-            utc_now = datetime.now(timezone.utc)
+                utc_now = datetime.now(timezone.utc)
 
             # --- YOLO personas ---
             personas = []
