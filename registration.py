@@ -10,6 +10,7 @@ import firebase_admin
 from firebase_admin import credentials, storage
 from mtcnn import MTCNN
 from keras_facenet import FaceNet
+from PIL import Image, ExifTags
 
 # ======== CONFIGURACIÓN (ajusta si es necesario) ========
 # Asegúrate de que este archivo de credenciales esté en la misma carpeta o proporciona la ruta completa
@@ -55,50 +56,60 @@ def find_pending_batches():
         batches[batch_path].append(blob)
     return batches
 
+# Reemplaza tu función process_batch completa por esta
+
 def process_batch(batch_path, blob_list):
-    """Procesa un lote de imágenes para generar y guardar un archivo .npy."""
+    """Procesa un lote, corrigiendo la orientación de la imagen antes de la detección."""
     print(f"\n[INFO] Nuevo lote de trabajo encontrado en: {batch_path}")
-    
-    # 1. Encontrar y leer el archivo de metadatos
+
     metadata_blob = next((b for b in blob_list if b.name.endswith('metadata.json')), None)
     if not metadata_blob:
-        print(f"[ERROR] No se encontró metadata.json en el lote {batch_path}. Saltando lote.")
-        # Aquí podrías añadir lógica para borrar este lote corrupto si lo deseas
+        print(f"[ERROR] No se encontró metadata.json. Saltando lote.")
         return
 
     try:
-        metadata_str = metadata_blob.download_as_string()
-        metadata = json.loads(metadata_str)
-        person_name = metadata.get('person_name', 'nombre_desconocido')
-        user_email = metadata.get('user_email', 'email_desconocido')
-        print(f"[INFO] Procesando registro para '{person_name}' del usuario '{user_email}'.")
+        metadata = json.loads(metadata_blob.download_as_string())
+        person_name = metadata.get('person_name', 'desconocido')
+        user_email = metadata.get('user_email', 'desconocido')
+        print(f"[INFO] Procesando registro para '{person_name}'.")
     except Exception as e:
-        print(f"[ERROR] No se pudo leer o parsear metadata.json en {batch_path}: {e}")
+        print(f"[ERROR] No se pudo leer metadata.json: {e}")
         return
 
-    # 2. Procesar cada imagen para obtener los embeddings
     embeddings = []
     image_blobs = [b for b in blob_list if not b.name.endswith('metadata.json')]
-    
+
     for image_blob in image_blobs:
         try:
             print(f"  -> Procesando imagen: {os.path.basename(image_blob.name)}...")
             img_bytes = image_blob.download_as_bytes()
-            img_np = np.frombuffer(img_bytes, np.uint8)
-            img_rgb = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
-            
-            # Detección de rostro
-            faces = detector.detect_faces(img_rgb)
+
+            # --- INICIO DE LA CORRECCIÓN CON PILLOW ---
+            # 1. Abrimos la imagen con Pillow y la rotamos si es necesario
+            image = Image.open(io.BytesIO(img_bytes))
+            if hasattr(image, '_getexif'):
+                exif = image._getexif()
+                if exif:
+                    orientation_key = next((key for key, value in ExifTags.TAGS.items() if value == 'Orientation'), None)
+                    if orientation_key and orientation_key in exif:
+                        orientation = exif[orientation_key]
+                        if orientation == 3: image = image.rotate(180, expand=True)
+                        elif orientation == 6: image = image.rotate(270, expand=True)
+                        elif orientation == 8: image = image.rotate(90, expand=True)
+
+            # 2. Convertimos la imagen corregida a formato OpenCV (BGR)
+            img_rgb = np.array(image.convert('RGB'))
+            img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR) # OpenCV usa BGR
+            # --- FIN DE LA CORRECCIÓN CON PILLOW ---
+
+            faces = detector.detect_faces(img_rgb) # La detección se hace sobre RGB
             if not faces:
-                print(f"  [WARN] No se detectó rostro en {image_blob.name}. Saltando imagen.")
+                print(f"  [WARN] No se detectó rostro en {image_blob.name}.")
                 continue
-            
+
             x, y, w, h = faces[0]['box']
-            x, y = abs(x), abs(y)
             face = img_rgb[y:y+h, x:x+w]
             face_resized = cv2.resize(face, (160, 160))
-            
-            # Generación de embedding
             embedding_vector = embedder.embeddings([face_resized])[0]
             embeddings.append(embedding_vector)
         except Exception as e:
