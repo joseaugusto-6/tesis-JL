@@ -215,7 +215,7 @@ def registrar_evento(ev):
 
 # =========== LOOP =========
 def main():
- history = []
+    history = []
     while True:
         blobs = [b for b in bucket.list_blobs(prefix=PREF_UPLOADS) if not b.name.endswith('/')]
         if not blobs:
