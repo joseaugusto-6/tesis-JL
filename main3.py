@@ -1,5 +1,6 @@
 import os
 import re
+import numpy as np
 from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify, Response
 from google.cloud import storage, firestore
 import paho.mqtt.client as mqtt # <-- ¡Añade esto para MQTT!
@@ -1025,6 +1026,59 @@ def update_user_settings():
         app.logger.error(f"Error al actualizar ajustes para {current_user_email}: {e}")
         return jsonify({"msg": "Error interno del servidor."}), 500
 
+# =======================================================================================
+
+# Reemplaza la función get_profile_summary completa por esta
+
+# ======================== API PARA RESUMEN DEL PERFIL DE USUARIO ========================
+@app.route('/api/user/profile_summary', methods=['GET'])
+@jwt_required()
+def get_profile_summary():
+    """Recoge y devuelve un resumen de la cuenta, incluyendo los nombres de los rostros registrados."""
+    try:
+        current_user_email = get_jwt_identity()
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        user_doc = user_doc_ref.get()
+
+        if not user_doc.exists:
+            return jsonify({"msg": "Usuario no encontrado."}), 404
+
+        user_data = user_doc.to_dict()
+
+        # --- LÓGICA MODIFICADA PARA LEER LOS NOMBRES DE LOS EMBEDDINGS ---
+        user_email_safe = "".join([c for c in current_user_email if c.isalnum() or c in ('_', '-')])
+        storage_prefix = f"embeddings_clientes/{user_email_safe}/"
+        blobs = bucket.list_blobs(prefix=storage_prefix)
+
+        registered_names = []
+        for blob in blobs:
+            if blob.name.endswith('.npy'):
+                try:
+                    # Descargamos el archivo en memoria y lo leemos con numpy
+                    file_bytes = blob.download_as_bytes()
+                    data = np.load(io.BytesIO(file_bytes), allow_pickle=True).item()
+                    if 'name' in data:
+                        registered_names.append(data['name'])
+                except Exception as e:
+                    app.logger.error(f"Error al leer el archivo .npy {blob.name}: {e}")
+
+        # --- FIN DE LA LÓGICA MODIFICADA ---
+
+        # Construir el resumen
+        summary = {
+            "name": user_data.get('name', ''),
+            "email": user_data.get('email', ''),
+            "device_count": len(user_data.get('devices', [])),
+            "face_registered": len(registered_names) > 0,
+            "registered_names": registered_names, # <-- NUEVA LISTA DE NOMBRES
+            "notification_preference": user_data.get('notification_preference', 'all')
+        }
+
+        return jsonify(summary), 200
+
+    except Exception as e:
+        app.logger.error(f"Error al generar resumen para {current_user_email}: {e}")
+        return jsonify({"msg": "Error interno del servidor."}), 500
 # =======================================================================================
 
 if __name__ == "__main__":
