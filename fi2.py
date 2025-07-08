@@ -51,7 +51,6 @@ firebase_admin.initialize_app(cred, {
 })
 bucket = storage.bucket()
 db     = firestore.client()
-print('[OK] Firebase inicializado')
 # =========================
 
 # ====== MODELOS ==========
@@ -60,6 +59,11 @@ embedder = FaceNet()
 yolo     = torch.hub.load('ultralytics/yolov5', 'yolov5x', trust_repo=True)
 NAMES    = yolo.names
 # =========================
+print('[OK] Firebase y Modelos de IA inicializados.')
+
+# --- NUEVO: Caché para los embeddings de los usuarios ---
+# Formato: {'user_email': {'embeddings': [...], 'labels': [...], 'timestamp': ...}}
+embeddings_cache = {}
 
 # ===== UTILIDADES ========
 def put_text_outline(img, text, x, y,
