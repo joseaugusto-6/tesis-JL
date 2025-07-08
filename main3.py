@@ -1048,6 +1048,7 @@ def get_profile_summary():
         # --- LÓGICA MODIFICADA PARA LEER LOS NOMBRES DE LOS EMBEDDINGS ---
         user_email_safe = "".join([c for c in current_user_email if c.isalnum() or c in ('_', '-')])
         storage_prefix = f"embeddings_clientes/{user_email_safe}/"
+        app.logger.info(f"DEBUG: Buscando embeddings en la carpeta: {storage_prefix}")
         blobs = bucket.list_blobs(prefix=storage_prefix)
 
         registered_names = []
