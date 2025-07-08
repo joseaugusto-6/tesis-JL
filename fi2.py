@@ -40,8 +40,12 @@ SIM_THRESHOLD    = 0.40
 REPEAT_THRESHOLD = 3
 COOLDOWN_SECONDS = 30
 EMB_REFRESH_SEC  = 600
+CACHE_EXPIRATION_SECONDS = 600  
 # =========================
 
+# --- NUEVO: Caché para los embeddings de los usuarios ---
+# Formato: {'user_email': {'embeddings': [...], 'labels': [...], 'timestamp': ...}}
+embeddings_cache = {}
 
 # ===== FIREBASE INIT =====
 cred = credentials.Certificate(SERVICE_ACCOUNT_FILE)
@@ -61,9 +65,7 @@ NAMES    = yolo.names
 # =========================
 print('[OK] Firebase y Modelos de IA inicializados.')
 
-# --- NUEVO: Caché para los embeddings de los usuarios ---
-# Formato: {'user_email': {'embeddings': [...], 'labels': [...], 'timestamp': ...}}
-embeddings_cache = {}
+
 
 # ===== UTILIDADES ========
 def put_text_outline(img, text, x, y,
