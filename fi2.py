@@ -247,153 +247,159 @@ def main():
 
                 utc_now = datetime.now(timezone.utc)
 
-            # --- YOLO personas ---
-            personas = []
-            for *xywh, conf, cls in yolo(img).xywh[0]:
-                if conf < 0.5 or NAMES[int(cls)] != 'person':
-                    continue
-                x, y, w, h = map(int, xywh)
-                px, py = x - w//2, y - h//2
-                personas.append((px, py, w, h))
-                cv2.rectangle(img, (px, py), (px+w, py+h), (0,255,255), 2)
+                # --- YOLO personas ---
+                personas = []
+                for *xywh, conf, cls in yolo(img).xywh[0]:
+                    if conf < 0.5 or NAMES[int(cls)] != 'person':
+                        continue
+                    x, y, w, h = map(int, xywh)
+                    px, py = x - w//2, y - h//2
+                    personas.append((px, py, w, h))
+                    cv2.rectangle(img, (px, py), (px+w, py+h), (0,255,255), 2)
 
-            # --- Rostros ---
-            faces = detector.detect_faces(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-            unknowns, known_set = [], set()
-            labels_corner = []         # ← nombres a mostrar en la esquina
+                # --- Rostros ---
+                faces = detector.detect_faces(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                unknowns, known_set = [], set()
+                labels_corner = []         # ← nombres a mostrar en la esquina
 
-            for f in faces:
-                x,y,w,h = [abs(int(v)) for v in f['box']]
-                if w<30 or h<30: continue
-                face_rgb = cv2.resize(
-                    cv2.cvtColor(img[y:y+h,x:x+w], cv2.COLOR_BGR2RGB), (160,160))
-                emb = embedder.embeddings(np.expand_dims(face_rgb,0))[0]
+                for f in faces:
+                    x,y,w,h = [abs(int(v)) for v in f['box']]
+                    if w<30 or h<30: continue
+                    face_rgb = cv2.resize(
+                        cv2.cvtColor(img[y:y+h,x:x+w], cv2.COLOR_BGR2RGB), (160,160))
+                    emb = embedder.embeddings(np.expand_dims(face_rgb,0))[0]
 
-                name, best = 'Desconocido', 1.0
-                for kv, kn in zip(known_embs, known_labels):
-                    d = cosine(emb, kv)
-                    if d < best:
-                        best = d
-                        if d < DIST_THRESHOLD:
-                            name = kn
+                    name, best = 'Desconocido', 1.0
+                    for kv, kn in zip(known_embs, known_labels):
+                        d = cosine(emb, kv)
+                        if d < best:
+                            best = d
+                            if d < DIST_THRESHOLD:
+                                name = kn
+                                break
+
+                    color = (0,255,0) if name!='Desconocido' else (0,0,255)
+                    cv2.rectangle(img,(x,y),(x+w,y+h),color,2)
+
+                    # Guardar etiqueta para la esquina
+                    labels_corner.append(name)
+
+                    if name=='Desconocido':
+                        if any(px<x<px+pw and py<y<py+ph for px,py,pw,ph in personas):
+                            unknowns.append({'emb': emb})
+                    else:
+                        known_set.add(name)
+
+                # --- Dibujar etiquetas en esquina sup-izq ---
+                y_offset = 20
+                for lbl in labels_corner:
+                    put_text_outline(img, lbl, 10, y_offset)
+                    y_offset += 18
+
+                # --- Reglas de evento (sin cambios) ---
+                evento, title, body = None, '', ''
+                is_group = len(unknowns) >= 2
+
+                if known_set:
+                    personas_txt = ', '.join(sorted(known_set))
+                    title = 'Persona conocida detectada'
+                    body  = f'{personas_txt} en cámara {device_id}.'
+                    evento = {'person_name': personas_txt, 'event_type': 'known_person'}
+
+                if unknowns and len(unknowns)==1:
+                    title = 'Persona desconocida detectada'
+                    body  = f'Rostro no identificado en {device_id}.'
+                    evento = {'person_name': 'Desconocido',
+                              'event_type': 'unknown_person'}
+
+                if is_group:
+                    title = '¡ALERTA GRUPAL!'
+                    body  = f'{len(unknowns)} desconocidos en {device_id}.'
+                    evento = {'person_name': 'Desconocidos (Grupo)',
+                              'event_type': 'unknown_group'}
+
+                if evento and evento['event_type']=='unknown_person':
+                    emb = unknowns[0]['emb']
+                    rep=False
+                    for hst in history:
+                        if cosine(emb,hst['emb']) < SIM_THRESHOLD:
+                            rep=True
+                            hst['count']+=1
+                            if (hst['count']>=REPEAT_THRESHOLD and
+                                (utc_now-hst['last']).total_seconds()>COOLDOWN_SECONDS):
+                                title='Desconocido recurrente'
+                                body=f'Rostro desconocido repetido en {device_id}.'
+                                evento['event_type']='unknown_person_repeat'
+                                hst['last']=utc_now
                             break
+                    if not rep:
+                        history.append({'emb':emb,'count':1,'last':utc_now})
+                    history[:] = [h for h in history
+                                  if (utc_now-h['last']).total_seconds()<60]
 
-                color = (0,255,0) if name!='Desconocido' else (0,0,255)
-                cv2.rectangle(img,(x,y),(x+w,y+h),color,2)
+                # --- Subir img & notificar (sin cambios) ---
+                img_url=None
+                if evento:
+                    ok,buff = cv2.imencode('.jpg', img)
+                    if ok:
+                        pref = PREF_GROUPS if is_group else PREF_PROCESSED
+                        out_blob = bucket.blob(pref + nombre.replace('.jpg','_proc.jpg'))
+                        out_blob.upload_from_string(buff.tobytes(),
+                                                    content_type='image/jpeg')
+                        out_blob.make_public()
+                        img_url = out_blob.public_url
 
-                # Guardar etiqueta para la esquina
-                labels_corner.append(name)
+                    evento.update({
+                        'timestamp'    : utc_now.isoformat(),
+                        'device_id'    : device_id,
+                        'image_url'    : img_url,
+                        'event_details': body,
+                    })
+                     # 1. Obtenemos la preferencia del usuario del documento que ya tenemos
+                    user_settings = owner_snap.to_dict()
+                    notification_preference = user_settings.get('notification_preference', 'all')
+                    
+                    # 2. Definimos qué es una alerta
+                    is_critical_alert = evento['event_type'] in [
+                        'unknown_person', 
+                        'unknown_person_repeated_alarm', 
+                        'unknown_group',
+                        'person_no_face_alarm',
+                        'alarm'
+                    ]
+                    # 3. Decidimos si enviar la notificación basándonos en la preferencia
+                    should_send_fcm = False
+                    if notification_preference == 'all':
+                        should_send_fcm = True
+                    elif notification_preference == 'alerts_only' and is_critical_alert:
+                        should_send_fcm = True
 
-                if name=='Desconocido':
-                    if any(px<x<px+pw and py<y<py+ph for px,py,pw,ph in personas):
-                        unknowns.append({'emb': emb})
-                else:
-                    known_set.add(name)
+                    # 4. Si la decisión es enviar, preparamos los datos y llamamos a send_fcm
+                    if should_send_fcm:
+                        print(f"[INFO] La preferencia del usuario es '{notification_preference}'. Enviando notificación...")
+                        event_data_for_fcm = {
+                            'title': title,
+                            'body': body,
+                            'image_url': img_url,
+                            'event_type': evento['event_type'],
+                            'device_id': device_id
+                        }
+                        send_fcm(owner_id, event_data_for_fcm)
+                    else:
+                        # Si no, simplemente lo registramos en el log y no hacemos nada más
+                        print(f"[INFO] La preferencia del usuario es '{notification_preference}'. Notificación para evento '{evento['event_type']}' suprimida.")
+                    
+                    registrar_evento(evento)
 
-            # --- Dibujar etiquetas en esquina sup-izq ---
-            y_offset = 20
-            for lbl in labels_corner:
-                put_text_outline(img, lbl, 10, y_offset)
-                y_offset += 18
-
-            # --- Reglas de evento (sin cambios) ---
-            evento, title, body = None, '', ''
-            is_group = len(unknowns) >= 2
-
-            if known_set:
-                personas_txt = ', '.join(sorted(known_set))
-                title = 'Persona conocida detectada'
-                body  = f'{personas_txt} en cámara {device_id}.'
-                evento = {'person_name': personas_txt, 'event_type': 'known_person'}
-
-            if unknowns and len(unknowns)==1:
-                title = 'Persona desconocida detectada'
-                body  = f'Rostro no identificado en {device_id}.'
-                evento = {'person_name': 'Desconocido',
-                          'event_type': 'unknown_person'}
-
-            if is_group:
-                title = '¡ALERTA GRUPAL!'
-                body  = f'{len(unknowns)} desconocidos en {device_id}.'
-                evento = {'person_name': 'Desconocidos (Grupo)',
-                          'event_type': 'unknown_group'}
-
-            if evento and evento['event_type']=='unknown_person':
-                emb = unknowns[0]['emb']
-                rep=False
-                for hst in history:
-                    if cosine(emb,hst['emb']) < SIM_THRESHOLD:
-                        rep=True
-                        hst['count']+=1
-                        if (hst['count']>=REPEAT_THRESHOLD and
-                            (utc_now-hst['last']).total_seconds()>COOLDOWN_SECONDS):
-                            title='Desconocido recurrente'
-                            body=f'Rostro desconocido repetido en {device_id}.'
-                            evento['event_type']='unknown_person_repeat'
-                            hst['last']=utc_now
-                        break
-                if not rep:
-                    history.append({'emb':emb,'count':1,'last':utc_now})
-                history[:] = [h for h in history
-                              if (utc_now-h['last']).total_seconds()<60]
-
-            # --- Subir img & notificar (sin cambios) ---
-            img_url=None
-            if evento:
-                ok,buff = cv2.imencode('.jpg', img)
-                if ok:
-                    pref = PREF_GROUPS if is_group else PREF_PROCESSED
-                    out_blob = bucket.blob(pref + nombre.replace('.jpg','_proc.jpg'))
-                    out_blob.upload_from_string(buff.tobytes(),
-                                                content_type='image/jpeg')
-                    out_blob.make_public()
-                    img_url = out_blob.public_url
-
-                evento.update({
-                    'timestamp'    : utc_now.isoformat(),
-                    'device_id'    : device_id,
-                    'image_url'    : img_url,
-                    'event_details': body,
-                })
-                 # 1. Obtenemos la preferencia del usuario del documento que ya tenemos
-                user_settings = owner_snap.to_dict()
-                notification_preference = user_settings.get('notification_preference', 'all')
-                
-                # 2. Definimos qué es una alerta
-                is_critical_alert = evento['event_type'] in [
-                    'unknown_person', 
-                    'unknown_person_repeated_alarm', 
-                    'unknown_group',
-                    'person_no_face_alarm',
-                    'alarm'
-                ]
-                # 3. Decidimos si enviar la notificación basándonos en la preferencia
-                should_send_fcm = False
-                if notification_preference == 'all':
-                    should_send_fcm = True
-                elif notification_preference == 'alerts_only' and is_critical_alert:
-                    should_send_fcm = True
-
-                # 4. Si la decisión es enviar, preparamos los datos y llamamos a send_fcm
-                if should_send_fcm:
-                    print(f"[INFO] La preferencia del usuario es '{notification_preference}'. Enviando notificación...")
-                    event_data_for_fcm = {
-                        'title': title,
-                        'body': body,
-                        'image_url': img_url,
-                        'event_type': evento['event_type'],
-                        'device_id': device_id
-                    }
-                    send_fcm(owner_id, event_data_for_fcm)
-                else:
-                    # Si no, simplemente lo registramos en el log y no hacemos nada más
-                    print(f"[INFO] La preferencia del usuario es '{notification_preference}'. Notificación para evento '{evento['event_type']}' suprimida.")
-                
-                registrar_evento(evento)
-
-            blob.delete()
-
+            except Exception as e:
+                print(f"[CRITICAL] Error procesando el blob {blob.name}: {e}")
+            finally:
+                # Asegurarse de borrar el blob procesado (o fallido)
+                blob.delete()
+        
         time.sleep(3)
+
+
 
 # =========== MAIN =========
 if __name__=='__main__':
