@@ -32,9 +32,10 @@ PREF_UPLOADS   = 'uploads/'
 PREF_PROCESSED = 'alarmas_procesadas/'
 PREF_GROUPS    = 'alertas_grupales/'
 PREF_EMBEDS    = 'embeddings_clientes/'
-
 MAIN3_API_BASE_URL   = 'https://tesisdeteccion.ddns.net/api'
 
+NO_FACE_THRESHOLD = 3 
+NO_FACE_TIMEOUT_SECONDS = 120 
 DIST_THRESHOLD   = 0.50
 SIM_THRESHOLD    = 0.40
 REPEAT_THRESHOLD = 3
@@ -55,9 +56,12 @@ db     = firestore.client()
 print('[OK] Firebase inicializado')
 # =========================
 
-# --- NUEVO: Caché para los embeddings de los usuarios ---
+# --- Caché para los embeddings de los usuarios ---
 # Formato: {'user_email': {'embeddings': [...], 'labels': [...], 'timestamp': ...}}
 embeddings_cache = {}
+# --- Memoria" para rastrear estas detecciones ---
+# Formato: {'camera_id': {'count': N, 'timestamp': ...}}
+no_face_tracker = {}
 
 # ====== MODELOS ==========
 detector = MTCNN()
@@ -261,6 +265,48 @@ def main():
                 faces = detector.detect_faces(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
                 unknowns, known_set = [], set()
                 labels_corner = []         # ← nombres a mostrar en la esquina
+
+# En la función main(), dentro del bucle 'for blob in blobs:'
+# ... después de las líneas que obtienen 'personas' y 'faces'...
+
+                # --- INICIO DE LA NUEVA LÓGICA PARA ROSTRO CUBIERTO ---
+                evento, title, body = None, '', ''
+                utc_now_obj = datetime.now(timezone.utc)
+
+                # Condición: Se detectó al menos una persona, pero CERO rostros.
+                if len(personas) > 0 and len(faces) == 0:
+                    print(f"[INFO] Detección de persona sin rostro en {device_id}.")
+                    
+                    # Revisamos nuestra memoria de seguimiento
+                    now = time.time()
+                    if (device_id not in no_face_tracker or 
+                        (now - no_face_tracker[device_id]['timestamp']) > NO_FACE_TIMEOUT_SECONDS):
+                        # Si es la primera vez o ha pasado mucho tiempo, reiniciamos el contador
+                        no_face_tracker[device_id] = {'count': 1, 'timestamp': now}
+                        print(f"[INFO] Iniciando seguimiento de rostro cubierto para {device_id}.")
+                    else:
+                        # Si es una detección reciente, incrementamos el contador
+                        no_face_tracker[device_id]['count'] += 1
+                        no_face_tracker[device_id]['timestamp'] = now
+                        print(f"[INFO] Detección consecutiva de rostro cubierto para {device_id}. Conteo: {no_face_tracker[device_id]['count']}.")
+
+                    # Comprobamos si hemos alcanzado el umbral para la alarma
+                    if no_face_tracker[device_id]['count'] >= NO_FACE_THRESHOLD:
+                        print(f"[ALARM] Umbral de rostro cubierto alcanzado para {device_id}!")
+                        title = "¡ALERTA DE SEGURIDAD!"
+                        body = f"Posible intruso cubriendo su rostro en la cámara {device_id}."
+                        evento = {
+                            'person_name': 'Rostro Cubierto',
+                            'event_type': 'person_no_face_alarm' # Nuevo tipo de evento
+                        }
+                        # Reiniciamos el contador para no enviar la misma alarma repetidamente
+                        no_face_tracker.pop(device_id, None)
+
+                # --- FIN DE LA NUEVA LÓGICA ---
+
+            # El resto de tu lógica para procesar los rostros que SÍ se encontraron
+            # (El bucle for f in faces: y la lógica de conocidos/desconocidos)
+            # ...
 
                 for f in faces:
                     x,y,w,h = [abs(int(v)) for v in f['box']]
