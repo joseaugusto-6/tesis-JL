@@ -224,7 +224,7 @@ def registrar_evento(ev):
 # ======================== FUNCIÓN MAIN COMPLETA Y CORREGIDA ========================
 def main():
     history = [] # Para el seguimiento de desconocidos recurrentes
-
+    
     while True:
         # Busca nuevos archivos en la carpeta de subidas
         blobs = [b for b in bucket.list_blobs(prefix=PREF_UPLOADS) if not b.name.endswith('/')]
@@ -261,8 +261,23 @@ def main():
                 utc_now_obj = datetime.now(timezone.utc)
 
                 # 4. EJECUTAR MODELOS DE IA
-                # Nota: Usamos MTCNN para detectar rostros. Puedes añadir la lógica de YOLO aquí si la necesitas para 'personas'.
+                # --- INICIO DE LA CORRECCIÓN ---
+                # Primero, detectamos personas con YOLO y llenamos la lista 'personas'
+                print(f"[INFO] Ejecutando YOLO para detectar personas...")
+                personas = []
+                # Asegúrate de que 'yolo' y 'NAMES' estén definidos globalmente al inicio del script
+                yolo_results = yolo(img_rgb) 
+                for *xywh, conf, cls in yolo_results.xywh[0]:
+                    if conf > 0.5 and NAMES[int(cls)] == 'person':
+                        personas.append(xywh)
+
+                print(f"[INFO] YOLO encontró {len(personas)} persona(s).")
+
+                # Segundo, detectamos rostros con MTCNN
+                print(f"[INFO] Ejecutando MTCNN para detectar rostros...")
                 faces = detector.detect_faces(img_rgb)
+                print(f"[INFO] MTCNN encontró {len(faces)} rostro(s).")
+                # --- FIN DE LA CORRECCIÓN ---
                 
                 # 5. ÁRBOL DE DECISIÓN: ¿Qué tipo de evento es esta imagen?
                 
