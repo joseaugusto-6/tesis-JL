@@ -218,11 +218,15 @@ def registrar_evento(ev):
 
 
 # =========== LOOP =========
+#aaaa
+
+# Reemplaza tu función main() completa por esta versión corregida
+# ======================== FUNCIÓN MAIN COMPLETA Y CORREGIDA ========================
 def main():
-    history = []
-    # --- Estas variables ahora se definen dentro del bucle principal ---
+    history = [] # Para el seguimiento de desconocidos recurrentes
 
     while True:
+        # Busca nuevos archivos en la carpeta de subidas
         blobs = [b for b in bucket.list_blobs(prefix=PREF_UPLOADS) if not b.name.endswith('/')]
         if not blobs:
             time.sleep(5)
@@ -230,160 +234,151 @@ def main():
 
         for blob in blobs:
             try:
-                # 1. IDENTIFICAR DISPOSITIVO Y PROPIETARIO
-                nombre = os.path.basename(blob.name)
-                device_id = nombre.split('_')[0] if '_' in nombre else 'unknown'
+                # 1. IDENTIFICAR PROPIETARIO DEL DISPOSITIVO
+                nombre_archivo = os.path.basename(blob.name)
+                device_id = nombre_archivo.split('_')[0] if '_' in nombre_archivo else 'unknown'
+                
                 owner_snap_query = db.collection('usuarios').where('devices', 'array_contains', device_id).limit(1).stream()
                 owner_snap = next(owner_snap_query, None)
+                
                 if not owner_snap:
                     print(f"[WARN] No se encontró propietario para {device_id}. Borrando imagen.")
                     blob.delete()
                     continue
+                
                 owner_id = owner_snap.id
-
-                # 2. CARGAR EMBEDDINGS ESPECÍFICOS DEL USUARIO
+                
+                # 2. CARGAR EMBEDDINGS ESPECÍFICOS PARA ESE USUARIO
                 known_embs, known_labels = cargar_embeddings_por_usuario(owner_id)
 
-                # 3. PROCESAR IMAGEN
+                # 3. PROCESAR LA IMAGEN
                 img_np = np.frombuffer(blob.download_as_bytes(), np.uint8)
                 img = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
                 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 
-                # 4. ÁRBOL DE DECISIÓN: ¿Qué tipo de evento es?
+                # Inicializar variables para el evento
                 evento, title, body = None, '', ''
                 utc_now_obj = datetime.now(timezone.utc)
 
-                personas_yolo = [] # Simulación de YOLO si no lo usas. Si lo usas, reemplaza con tu lógica.
-                faces_mtcnn = detector.detect_faces(img_rgb)
-
-                # --- CASO 1: PERSONA DETECTADA, PERO SIN ROSTRO VISIBLE ---
-                if len(faces_mtcnn) == 0 and len(personas_yolo) > 0: # Ajusta 'personas_yolo' si es necesario
-                    # (Lógica de conteo que ya funciona)
+                # 4. EJECUTAR MODELOS DE IA
+                # Nota: Usamos MTCNN para detectar rostros. Puedes añadir la lógica de YOLO aquí si la necesitas para 'personas'.
+                faces = detector.detect_faces(img_rgb)
+                
+                # 5. ÁRBOL DE DECISIÓN: ¿Qué tipo de evento es esta imagen?
+                
+                # --- CASO A: PERSONA(S) DETECTADA(S), PERO NINGÚN ROSTRO VISIBLE ---
+                # Esta condición es la clave: hay "personas" pero no "rostros".
+                if len(personas) > 0 and len(faces) == 0:
+                    print(f"[INFO] Detección de persona sin rostro en {device_id}.")
+                    
                     now = time.time()
-                    if (device_id not in no_face_tracker or (now - no_face_tracker[device_id]['timestamp']) > NO_FACE_TIMEOUT_SECONDS):
+                    # Si es la primera vez que vemos esto en esta cámara o ha pasado mucho tiempo, (re)iniciamos el contador
+                    if (device_id not in no_face_tracker or 
+                        (now - no_face_tracker[device_id]['timestamp']) > NO_FACE_TIMEOUT_SECONDS):
                         no_face_tracker[device_id] = {'count': 1, 'timestamp': now}
+                        print(f"[INFO] Iniciando seguimiento de rostro cubierto para {device_id}.")
                     else:
+                        # Si es una detección reciente en la misma cámara, incrementamos el contador
                         no_face_tracker[device_id]['count'] += 1
                         no_face_tracker[device_id]['timestamp'] = now
-                    
-                    print(f"[INFO] Detección consecutiva de rostro cubierto para {device_id}. Conteo: {no_face_tracker[device_id]['count']}.")
-                    
+                        print(f"[INFO] Detección consecutiva de rostro cubierto para {device_id}. Conteo: {no_face_tracker[device_id]['count']}.")
+
+                    # Comprobamos si hemos alcanzado el umbral para disparar la alarma
                     if no_face_tracker[device_id]['count'] >= NO_FACE_THRESHOLD:
                         print(f"[ALARM] Umbral de rostro cubierto alcanzado para {device_id}!")
                         title = "¡ALERTA DE SEGURIDAD!"
                         body = f"Posible intruso cubriendo su rostro en la cámara {device_id}."
-                        evento = {'person_name': 'Rostro Cubierto', 'event_type': 'person_no_face_alarm'}
+                        evento = {
+                            'person_name': 'Rostro Cubierto',
+                            'event_type': 'person_no_face_alarm'
+                        }
+                        # Reiniciamos el contador para esta cámara para no enviar la misma alarma repetidamente
                         no_face_tracker.pop(device_id, None)
 
-                # --- CASO 2: SÍ SE DETECTARON ROSTROS ---
-                elif len(faces_mtcnn) > 0:
+                # --- CASO B: SÍ SE DETECTARON ROSTROS ---
+                elif len(faces) > 0:
                     unknowns, known_set = [], set()
-                    labels_corner = []
-
-                    for face in faces_mtcnn:
+                    for face in faces:
                         x, y, w, h = [abs(int(v)) for v in face['box']]
                         if w < 30 or h < 30: continue
-
+                        
                         face_rgb = cv2.resize(img_rgb[y:y+h, x:x+w], (160, 160))
                         emb = embedder.embeddings(np.expand_dims(face_rgb, 0))[0]
 
-                        name, best = 'Desconocido', 1.0
-                        # --- Esta es tu lógica de comparación de embeddings (Punto 2) ---
-                        for kv, kn in zip(known_embs, known_labels):
-                            d = cosine(emb, kv)
-                            if d < best:
-                                best = d
-                                if d < DIST_THRESHOLD:
-                                    name = kn
-                        # -------------------------------------------------------------
+                        name = "Desconocido"
+                        if known_embs: # Solo comparar si el usuario tiene rostros registrados
+                            best_dist = 1.0
+                            for kv, kn in zip(known_embs, known_labels):
+                                dist = cosine(emb, kv)
+                                if dist < best_dist:
+                                    best_dist = dist
+                                    if dist < DIST_THRESHOLD:
+                                        name = kn
+                        
+                        color = (0, 255, 0) if name != 'Desconocido' else (0, 0, 255)
+                        cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
 
                         if name == 'Desconocido':
                             unknowns.append({'emb': emb})
                         else:
                             known_set.add(name)
-
-                    # Lógica de decisión después de analizar todos los rostros
+                    
+                    # Decisión basada en los rostros encontrados
                     if len(unknowns) >= 2:
-                        title = '¡ALERTA GRUPAL!'
-                        body = f'{len(unknowns)} desconocidos en {device_id}.'
+                        title, body = '¡ALERTA GRUPAL!', f'{len(unknowns)} desconocidos en {device_id}.'
                         evento = {'person_name': 'Desconocidos (Grupo)', 'event_type': 'unknown_group'}
                     elif len(unknowns) == 1:
-                        # Aquí puedes añadir tu lógica para desconocidos recurrentes si quieres
-                        title = 'Persona desconocida detectada'
-                        body = f'Rostro no identificado en {device_id}.'
+                        title, body = 'Persona desconocida detectada', f'Rostro no identificado en {device_id}.'
                         evento = {'person_name': 'Desconocido', 'event_type': 'unknown_person'}
                     elif known_set:
                         personas_txt = ', '.join(sorted(known_set))
-                        title = 'Persona conocida detectada'
-                        body = f'{personas_txt} en cámara {device_id}.'
+                        title, body = 'Persona conocida detectada', f'{personas_txt} en cámara {device_id}.'
                         evento = {'person_name': personas_txt, 'event_type': 'known_person'}
 
-                # 5. PUNTO DE ACCIÓN FINAL
-                # Si se generó CUALQUIER tipo de evento, se procesa aquí
+                # 6. PUNTO DE ACCIÓN FINAL
+                # Si se generó CUALQUIER tipo de evento en los pasos anteriores, se procesa aquí.
                 if evento:
+                    # Subir la imagen procesada (con los recuadros)
                     ok, buff = cv2.imencode('.jpg', img)
                     img_url = None
                     if ok:
                         pref = PREF_GROUPS if evento.get('event_type') == 'unknown_group' else PREF_PROCESSED
-                        out_blob = bucket.blob(pref + nombre.replace('.jpg', '_proc.jpg'))
+                        out_blob_name = pref + nombre_archivo.replace('.jpg', '_proc.jpg')
+                        out_blob = bucket.blob(out_blob_name)
                         out_blob.upload_from_string(buff.tobytes(), content_type='image/jpeg')
                         out_blob.make_public()
                         img_url = out_blob.public_url
 
-                    # Completamos los datos del evento
+                    # Completar y registrar el evento en Firestore
                     evento.update({
                         'timestamp': utc_now_obj.isoformat(),
                         'device_id': device_id,
                         'image_url': img_url,
                         'event_details': body,
                     })
-                    
-                    # Lo registramos en Firestore
-                    registrar_evento(evento) 
+                    registrar_evento(evento) # Asegúrate de que esta función exista y esté correcta
 
-                    # 1. Obtenemos la preferencia del usuario del documento que ya tenemos
+                    # Enviar notificación push respetando las preferencias del usuario
                     user_settings = owner_snap.to_dict()
-                    notification_preference = user_settings.get('notification_preference', 'all')
+                    pref = user_settings.get('notification_preference', 'all')
+                    is_critical = evento['event_type'] not in ['known_person']
 
-                    # 2. Definimos qué es una alerta crítica
-                    is_critical_alert = evento['event_type'] in [
-                        'unknown_person', 
-                        'unknown_person_repeated_alarm', 
-                        'unknown_group',
-                        'person_no_face_alarm',
-                        'alarm'
-                    ]
-
-                    # 3. Decidimos si enviar la notificación
-                    should_send_fcm = False
-                    if notification_preference == 'all':
-                        should_send_fcm = True
-                    elif notification_preference == 'alerts_only' and is_critical_alert:
-                        should_send_fcm = True
-
-                    # 4. Si la decisión es enviar, preparamos los datos y llamamos a send_fcm
-                    if should_send_fcm:
-                        print(f"[INFO] La preferencia del usuario es '{notification_preference}'. Enviando notificación...")
-                        event_data_for_fcm = {
-                            'title': title,
-                            'body': body,
-                            'image_url': img_url,
-                            'event_type': evento['event_type'],
-                            'device_id': device_id
-                        }
-                        send_fcm(owner_id, event_data_for_fcm)
+                    if pref == 'all' or (pref == 'alerts_only' and is_critical):
+                        print(f"[INFO] Preferencia '{pref}', enviando notificación para evento '{evento['event_type']}'.")
+                        fcm_data = {'title': title, 'body': body, 'image_url': img_url, **evento}
+                        send_fcm(owner_id, fcm_data)
                     else:
-                        print(f"[INFO] La preferencia del usuario es '{notification_preference}'. Notificación para evento '{evento['event_type']}' suprimida.")
-                    # Y enviamos la notificación (respetando las preferencias del usuario)
-                    # (Aquí va tu bloque de código que decide si enviar o no y llama a send_fcm)
-                    # ...
+                        print(f"[INFO] Preferencia '{pref}', notificación suprimida para evento '{evento['event_type']}'.")
 
             except Exception as e:
-                print(f"[CRITICAL] Error procesando el blob {blob.name}: {e}")
+                print(f"[CRITICAL] Error procesando el blob {nombre_archivo}: {e}")
             finally:
+                # Borrar la imagen original de la carpeta 'uploads'
                 blob.delete()
         
         time.sleep(3)
+
+# =================================================================================
 
 
 
