@@ -155,11 +155,11 @@ def firestore_check_user(email, password):
     return check_password_hash(user["password_hash"], password)
 
 # ------------------------ FLASK RUTAS WEB (EXISTENTES) -------------------------------
+
 @app.route("/")
-def index():
-    if 'user_email' in session:
-        return redirect(url_for('upload_npy'))
+def home_page():
     return render_template("index.html")
+
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
