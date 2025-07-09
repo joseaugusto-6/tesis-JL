@@ -224,7 +224,7 @@ def registrar_evento(ev):
 # ======================== FUNCIÓN MAIN COMPLETA Y CORREGIDA ========================
 def main():
     history = [] # Para el seguimiento de desconocidos recurrentes
-    
+
     while True:
         # Busca nuevos archivos en la carpeta de subidas
         blobs = [b for b in bucket.list_blobs(prefix=PREF_UPLOADS) if not b.name.endswith('/')]
@@ -270,7 +270,11 @@ def main():
                 for *xywh, conf, cls in yolo_results.xywh[0]:
                     if conf > 0.5 and NAMES[int(cls)] == 'person':
                         personas.append(xywh)
-
+                        x_yolo, y_yolo, w_yolo, h_yolo = map(int, xywh)
+                        px, py = x_yolo - w_yolo//2, y_yolo - h_yolo//2
+                        # El color amarillo en formato BGR (Blue, Green, Red) es (0, 255, 255)
+                        cv2.rectangle(img, (px, py), (px + w_yolo, py + h_yolo), (0, 255, 255), 2)
+               
                 print(f"[INFO] YOLO encontró {len(personas)} persona(s).")
 
                 # Segundo, detectamos rostros con MTCNN
@@ -312,6 +316,8 @@ def main():
 
                 # --- CASO B: SÍ SE DETECTARON ROSTROS ---
                 elif len(faces) > 0:
+                    print(f"[INFO] Condición cumplida: Procesando {len(faces)} rostro(s) encontrado(s).")
+                    unknowns, known_set = [], set()
                     unknowns, known_set = [], set()
                     for face in faces:
                         x, y, w, h = [abs(int(v)) for v in face['box']]
@@ -332,6 +338,16 @@ def main():
                         
                         color = (0, 255, 0) if name != 'Desconocido' else (0, 0, 255)
                         cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+
+                        cv2.putText(
+                            img,
+                            name, # El texto a mostrar (ej. "Jose Augusto" o "Desconocido")
+                            (x, y - 10), # Posición: un poco arriba de la esquina superior izquierda del recuadro
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,   # Tamaño de la fuente
+                            color, # Usa el mismo color (verde o rojo) que el recuadro
+                            2      # Grosor de la fuente
+                        )
 
                         if name == 'Desconocido':
                             unknowns.append({'emb': emb})
@@ -394,7 +410,6 @@ def main():
         time.sleep(3)
 
 # =================================================================================
-
 
 
 # =========== MAIN =========
