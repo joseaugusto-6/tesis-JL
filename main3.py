@@ -1084,5 +1084,41 @@ def get_profile_summary():
         return jsonify({"msg": "Error interno del servidor."}), 500
 # =======================================================================================
 
+# ======================== API PARA ELIMINAR EMBEDDINGS DE ROSTROS ========================
+@app.route('/api/embeddings/delete', methods=['DELETE'])
+@jwt_required()
+def delete_embedding():
+    """Elimina un archivo .npy de un rostro registrado para un usuario."""
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        person_name = data.get('person_name')
+
+        if not person_name:
+            return jsonify({"msg": "Falta el nombre de la persona a eliminar."}), 400
+
+        # 1. Sanitizar los nombres para construir la ruta del archivo, igual que al crearlo
+        user_email_safe = "".join([c for c in current_user_email if c.isalnum() or c in ('_', '-')])
+        safe_person_name = person_name.replace(" ", "_").lower()
+        
+        # 2. Construir la ruta exacta del archivo en Firebase Storage
+        blob_path = f"embeddings_clientes/{user_email_safe}/{safe_person_name}.npy"
+        app.logger.info(f"Intento de eliminación para: {blob_path}")
+
+        # 3. Obtener el blob y eliminarlo si existe
+        blob = bucket.blob(blob_path)
+        if blob.exists():
+            blob.delete()
+            app.logger.info(f"Archivo {blob_path} eliminado exitosamente.")
+            return jsonify({"msg": f"El rostro de '{person_name}' ha sido eliminado."}), 200
+        else:
+            app.logger.warning(f"Se intentó eliminar un archivo no existente: {blob_path}")
+            return jsonify({"msg": "No se encontró el rostro especificado."}), 404
+
+    except Exception as e:
+        app.logger.error(f"Error al eliminar embedding para {current_user_email}: {e}")
+        return jsonify({"msg": "Error interno del servidor."}), 500
+# =======================================================================================
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
