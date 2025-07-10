@@ -109,16 +109,24 @@ def cargar_embeddings_por_usuario(user_email):
     return embs, labels
 
 # ===== UTILIDADES ========
-def put_text_outline(img, text, x, y,
-                     text_color=(255,255,255), outline=(0,0,0),
-                     font=cv2.FONT_HERSHEY_SIMPLEX, scale=0.5, thickness=1):
-    """Texto blanco con borde negro, sin fondo."""
-    for dx in (-1, 1):
-        for dy in (-1, 1):
-            cv2.putText(img, text, (x+dx, y+dy), font,
-                        scale, outline, thickness+1, cv2.LINE_AA)
-    cv2.putText(img, text, (x, y), font,
-                scale, text_color, thickness, cv2.LINE_AA)
+
+
+# Pega esta función al principio de tu archivo fi.py
+
+def draw_text_with_outline(img, text, position, font_scale, color, thickness):
+    """
+    Dibuja un texto con un borde negro para mejorar la legibilidad.
+    """
+    # Dibuja el borde negro (dibujando el texto 4 veces con un ligero desfase)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    outline_color = (0, 0, 0) # Negro
+    cv2.putText(img, text, (position[0]-1, position[1]-1), font, font_scale, outline_color, thickness+1, cv2.LINE_AA)
+    cv2.putText(img, text, (position[0]+1, position[1]-1), font, font_scale, outline_color, thickness+1, cv2.LINE_AA)
+    cv2.putText(img, text, (position[0]-1, position[1]+1), font, font_scale, outline_color, thickness+1, cv2.LINE_AA)
+    cv2.putText(img, text, (position[0]+1, position[1]+1), font, font_scale, outline_color, thickness+1, cv2.LINE_AA)
+    
+    # Dibuja el texto principal encima
+    cv2.putText(img, text, position, font, font_scale, color, thickness, cv2.LINE_AA)
 
 
 def cargar_embeddings_por_usuario(user_email):
@@ -319,6 +327,8 @@ def main():
                     print(f"[INFO] Condición cumplida: Procesando {len(faces)} rostro(s) encontrado(s).")
                     unknowns, known_set = [], set()
                     unknowns, known_set = [], set()
+
+
                     for face in faces:
                         x, y, w, h = [abs(int(v)) for v in face['box']]
                         if w < 30 or h < 30: continue
@@ -339,21 +349,28 @@ def main():
                         color = (0, 255, 0) if name != 'Desconocido' else (0, 0, 255)
                         cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
 
-                        cv2.putText(
-                            img,
-                            name, # El texto a mostrar (ej. "Jose Augusto" o "Desconocido")
-                            (x, y - 10), # Posición: un poco arriba de la esquina superior izquierda del recuadro
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.7,   # Tamaño de la fuente
-                            color, # Usa el mismo color (verde o rojo) que el recuadro
-                            2      # Grosor de la fuente
-                        )
-
                         if name == 'Desconocido':
                             unknowns.append({'emb': emb})
                         else:
                             known_set.add(name)
-                    
+                        
+                        detected_names.add(name)
+
+                    if detected_names:
+                        display_text = ", ".join(sorted(list(detected_names)))
+                        
+                        # Calculamos el tamaño del texto para posicionarlo bien
+                        font_scale = 0.7
+                        thickness = 2
+                        (text_width, text_height), _ = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+                        
+                        # Posición en la esquina superior derecha con un margen de 10px
+                        image_height, image_width, _ = img.shape
+                        position = (image_width - text_width - 10, text_height + 10)
+                        
+                        # Llamamos a nuestra nueva función para dibujar
+                        draw_text_with_outline(img, display_text, position, font_scale, (255, 255, 255), thickness)
+
                     # Decisión basada en los rostros encontrados
                     if len(unknowns) >= 2:
                         title, body = '¡ALERTA GRUPAL!', f'{len(unknowns)} desconocidos en {device_id}.'
