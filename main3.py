@@ -323,7 +323,7 @@ def get_event_history():
         app.logger.error(f"Error al obtener historial de eventos: {e}")
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
-#---------- endpoint para obtener los datos para el dashboard ---------------
+#---------- API para obtener los datos para el dashboard ---------------
 @app.route('/api/dashboard_data', methods=['GET'])
 @jwt_required()
 def get_dashboard_data():
@@ -366,7 +366,7 @@ def get_dashboard_data():
             'device_id': event_data.get('device_id', 'unknown')
         })
 
-    # --- Lógica para calcular estadísticas diarias (Entradas Hoy, Alarmas Hoy) ---
+    # --- Lógica para calcular estadísticas diarias  ---
     # Obtener la fecha de hoy en la zona horaria de Caracas
     now_caracas = datetime.now(CARACAS_TIMEZONE)
     today_start = now_caracas.replace(hour=0, minute=0, second=0, microsecond=0)
