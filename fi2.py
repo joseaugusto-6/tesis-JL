@@ -326,7 +326,7 @@ def main():
                 elif len(faces) > 0:
                     print(f"[INFO] Condición cumplida: Procesando {len(faces)} rostro(s) encontrado(s).")
                     unknowns, known_set = [], set()
-                    unknowns, known_set = [], set()
+                    detected_names = set()
 
 
                     for face in faces:
