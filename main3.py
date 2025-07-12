@@ -605,23 +605,33 @@ def live_stream_web_page():
 
 # ------------------------ API PARA SERVIR EL ÚLTIMO FRAME (para polling) ------------------------
 @app.route('/api/latest_frame', methods=['GET'])
-#@jwt_required() # Proteger el acceso a la última imagen
 def latest_frame():
-    # Obtener el camera_id del request arguments
     camera_id = request.args.get('camera_id')
     if not camera_id:
-        return Response(b'{"error": "Missing camera_id parameter."}', mimetype='application/json', status=400) # Devolver JSON de error
+        return Response(b'{"error": "Missing camera_id parameter."}', mimetype='application/json', status=400)
 
     with frames_lock:
-        frame_data_for_camera = latest_frames.get(camera_id) # Obtener frame específico para esta camera_id
+        frame_data_for_camera = latest_frames.get(camera_id)
 
-    # Verificar si el frame es reciente (no más de 15 segundos, por ejemplo)
-    if frame_data_for_camera and (time.time() - frame_data_for_camera['timestamp'].timestamp()) < 15: # Usar .timestamp() para comparar con time.time()
-        return Response(frame_data_for_camera['frame'], mimetype='image/jpeg')
+    # Preparamos la respuesta que vamos a enviar
+    response = None
+    
+    # Verificamos si hay un frame reciente
+    if frame_data_for_camera and (time.time() - frame_data_for_camera['timestamp'].timestamp()) < 15:
+        # Si hay un frame, lo usamos para la respuesta
+        response = Response(frame_data_for_camera['frame'], mimetype='image/jpeg')
     else:
-        # Si no hay frames recientes para esa cámara, o la cámara no existe, devolver la imagen estática
-        return Response(STATIC_NO_STREAM_IMAGE_BYTES, mimetype='image/jpeg')
+        # Si no, usamos la imagen estática de "no disponible"
+        response = Response(STATIC_NO_STREAM_IMAGE_BYTES, mimetype='image/jpeg')
 
+    # --- INICIO DE LA CORRECCIÓN ---
+    # Añadimos las cabeceras a la respuesta para PREVENIR EL CACHÉ
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    # --- FIN DE LA CORRECCIÓN ---
+
+    return response
 # ------------------------ FIN API PARA SERVIR EL ÚLTIMO FRAME --------------------
 
 # ------------------------ API PARA RE-TRANSMITIR STREAM A LA APP (via Polling) ------------------------
