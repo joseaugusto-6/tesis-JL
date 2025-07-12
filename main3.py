@@ -15,6 +15,7 @@ import base64
 import uuid 
 import json # Para generar tokens de sesión de stream
 import io 
+import redis
 
 # Inicializaciones básicas
 app = Flask(__name__)
@@ -68,6 +69,8 @@ MQTT_QOS_INTERNAL = 1
 storage_client = storage.Client()
 bucket = storage_client.get_bucket(BUCKET_NAME) 
 db = firestore.Client()
+# Conexión a la base de datos en memoria Redis
+redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
 # Define la zona horaria de Caracas (o la que te sea relevante)
 CARACAS_TIMEZONE = timezone(timedelta(hours=-4))
@@ -501,42 +504,39 @@ def remove_device_from_user():
 # ------------------------ API PARA RECIBIR STREAM DE PC -------------------------------
 @app.route('/api/stream_upload', methods=['POST'])
 def stream_upload():
-    global is_streaming_active, last_frame_received_time # Acceder a la variable global
     try:
-        # Esperamos que el frame se envíe como un archivo binario o base64 en el cuerpo
-        # Si se envía como 'file' en form-data:
         if 'frame' not in request.files:
-            # O si se envía como raw binary data:
-            if request.data:
-                frame_data = request.data
-                # print("Recibido frame como raw data") # DEBUG
-            else:
-                return jsonify({"error": "No se recibió frame de video."}), 400
-        else:
-            frame_data = request.files['frame'].read()
-            print("Recibido frame como file") # DEBUG
-
-        if not frame_data:
-            return jsonify({"error": "Frame de video vacío."}), 400
+            return jsonify({"error": "No se recibió el archivo 'frame'."}), 400
         
-        camera_id = request.form.get('camera_id', 'default_camera') # Obtener camera_id del form-data
+        frame_file = request.files['frame']
+        camera_id = request.form.get('camera_id')
+
         if not camera_id:
-            return jsonify({"error": "Missing camera_id in form data."}), 400
+            return jsonify({"error": "Falta el camera_id."}), 400
+            
+        frame_data = frame_file.read()
+        if not frame_data:
+            return jsonify({"error": "El frame de video está vacío."}), 400
 
-        # Guardar el último frame para la camera_id específica en el diccionario
-        with frames_lock:
-            latest_frames[camera_id] = {"frame": frame_data, "timestamp": datetime.now()}
-            # Actualizar el estado general del stream si es el primer frame o si vuelve a estar activo
-            if not is_streaming_active:
-                is_streaming_active = True
-            last_frame_received_time = time.time() # Actualizar tiempo de último frame general
+        # --- LÓGICA CON REDIS ---
+        # 1. Guardamos el frame en Redis. La clave será, por ejemplo, "frame:camera001"
+        redis_key = f"frame:{camera_id}"
+        redis_client.set(redis_key, frame_data)
+        # Le damos un tiempo de expiración para que no se quede para siempre si la cámara se apaga
+        redis_client.expire(redis_key, 15) 
         
+        # 2. Guardamos una copia en Firebase Storage para la IA (esto no cambia)
+        now_str = datetime.now(CARACAS_TIMEZONE).strftime('%Y%m%d_%H%M%S')
+        filename = f"{camera_id}_{now_str}.jpg"
+        blob_path = f"uploads/{camera_id}/{filename}"
+        bucket.blob(blob_path).upload_from_string(frame_data, content_type='image/jpeg')
+        
+        app.logger.info(f"Frame de {camera_id} recibido y guardado en Redis y Storage.")
         return jsonify({"message": "Frame recibido."}), 200
+
     except Exception as e:
-        app.logger.error(f"Error al recibir frame de stream: {e}")
-        # Considerar si todos los streams están inactivos, no solo uno
-        # is_streaming_active = False # Esta variable ahora es más para el estado general
-        return jsonify({"error": str(e)}), 500
+        app.logger.error(f"Error en stream_upload: {e}")
+        return jsonify({"error": "Error interno del servidor."}), 500
 
 # ------------------------ FIN API PARA RECIBIR STREAM DE PC ---------------------------
 
@@ -610,31 +610,22 @@ def latest_frame():
     if not camera_id:
         return Response(b'{"error": "Missing camera_id parameter."}', mimetype='application/json', status=400)
 
-    with frames_lock:
-        frame_data_for_camera = latest_frames.get(camera_id)
-
-    response = None
+    # --- LÓGICA CON REDIS ---
+    # Buscamos el frame en nuestro "pizarrón" centralizado de Redis
+    redis_key = f"frame:{camera_id}"
+    frame_data = redis_client.get(redis_key)
     
-    if frame_data_for_camera and (time.time() - frame_data_for_camera['timestamp'].timestamp()) < 15:
-        response = Response(frame_data_for_camera['frame'], mimetype='image/jpeg')
+    response = None
+    if frame_data:
+        response = Response(frame_data, mimetype='image/jpeg')
     else:
         response = Response(STATIC_NO_STREAM_IMAGE_BYTES, mimetype='image/jpeg')
 
-    # --- INICIO DE LA CORRECCIÓN REFORZADA ---
-    # Le damos al navegador todas las razones posibles para no usar el caché.
-    
-    # 1. Órdenes estándar de no-caché (las que ya teníamos)
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    # Añadimos las cabeceras para prevenir el caché del navegador (esto no cambia)
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     
-    # 2. Órdenes de validación (NUEVAS)
-    # Le decimos que la última modificación fue "justo ahora"
-    response.headers['Last-Modified'] = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
-    # Le damos una "etiqueta de versión" única y aleatoria a cada imagen
-    response.headers['ETag'] = str(time.time()) 
-    # --- FIN DE LA CORRECCIÓN REFORZADA ---
-
     return response
 # ------------------------ FIN API PARA SERVIR EL ÚLTIMO FRAME --------------------
 
