@@ -1,12 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-fi.py – Worker de SecurityCamApp
-• Mismos umbrales, rutas y lógica que acordamos.
-• Marco verde = conocido, rojo = desconocido.
-• Texto SIEMPRE blanco con borde negro, desplazado a la esquina sup-izq.
-"""
-
 # ======== IMPORTS ========
 import io, os, time
 from datetime import datetime, timezone
