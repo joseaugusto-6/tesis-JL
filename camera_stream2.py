@@ -41,9 +41,9 @@ FIREBASE_UPLOAD_PATH_CAPTURE_MODE = f"uploads/{CAMERA_ID_PC}/" # <--- Carpeta pa
 current_mode = "STREAMING_MODE" # Modo inicial al arrancar
 last_capture_time = time.time() # Para controlar el tiempo entre capturas
 
-CAPTURE_INTERVAL_SECONDS = 4 # Capturar una imagen cada 5 segundos en CAPTURE_MODE
+CAPTURE_INTERVAL_SECONDS = 4 # Capturar una imagen cada 4 segundos en CAPTURE_MODE
 last_status_publish_time = time.time() # 
-STATUS_PUBLISH_INTERVAL_SECONDS = 5 # Publicar estado cada 30 segundos
+STATUS_PUBLISH_INTERVAL_SECONDS = 20 # Publicar estado cada 30 segundos
 is_camera_on = True 
 
 # ========== INICIALIZACIÓN FIREBASE ADMIN SDK (PARA SUBIR A STORAGE) ==========
