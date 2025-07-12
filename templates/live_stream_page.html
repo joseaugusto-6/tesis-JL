@@ -4,81 +4,101 @@
     <title>Video en Vivo - Camara de Seguridad</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { background-color: #212121; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; overflow: hidden; }
-        h1 { color: #e0e0e0; margin-bottom: 20px; }
-        #liveStream { border: 2px solid #424242; max-width: 100%; height: auto; display: block; background-color: black; border-radius: 8px; }
-        .status { margin-top: 10px; font-size: 1.1em; color: #9e9e9e; }
-        .error { color: #ef5350; font-weight: bold; }
-        .loading-spinner { border: 4px solid rgba(255, 255, 255, 0.2); border-top: 4px solid #42A5F5; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-top: 20px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        body { 
+            background-color: #212121; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            min-height: 100vh; 
+            margin: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            flex-direction: column; 
+            overflow: hidden; 
+        }
+        .stream-container {
+            position: relative;
+            width: 90%;
+            max-width: 800px;
+        }
+        #liveStream { 
+            border: 2px solid #424242; 
+            width: 100%; 
+            height: auto; 
+            display: block; 
+            background-color: black; 
+            border-radius: 8px; 
+        }
+        .status { 
+            margin-top: 15px; 
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-size: 1em; 
+            font-weight: 500;
+            color: #e0e0e0; 
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: background-color 0.3s ease;
+        }
+        .status.error { 
+            color: #ffffff; 
+            background-color: #d32f2f;
+            font-weight: bold; 
+        }
+        .status.connected {
+            background-color: #388e3c;
+            color: #ffffff;
+        }
     </style>
 </head>
 <body>
-    <h1>Videooooo en Vivo</h1>
-    <img id="liveStream" src="" alt="Cargando video...">
-    <div class="loading-spinner" id="spinner"></div>
+    <div class="stream-container">
+        <img id="liveStream" src="" alt="Cargando video...">
+    </div>
     <p class="status" id="streamStatus">Conectando...</p>
 
     <script>
         const streamImg = document.getElementById('liveStream');
         const streamStatus = document.getElementById('streamStatus');
-        const spinner = document.getElementById('spinner');
 
+        // --- INICIO DE LA CORRECCIÓN ---
+        // Volvemos a la función original para leer parámetros, que es más robusta.
         function getUrlParameter(name) {
-            const params = new URLSearchParams(window.location.search);
-            return params.get(name);
+            name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+            var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+            var results = regex.exec(location.search);
+            return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
         };
+        // --- FIN DE LA CORRECCIÓN ---
 
         const cameraId = getUrlParameter('camera_id');
         const sessionToken = getUrlParameter('session_token');
-        const API_LATEST_FRAME_URL = '/api/latest_frame';
-
-        // --- INICIO DE LA CORRECCIÓN ---
-        let lastDisplayedTimestamp = 0; // Guardaremos el timestamp del último frame mostrado
-        // --- FIN DE LA CORRECCIÓN ---
 
         if (!cameraId || !sessionToken) {
             streamStatus.textContent = 'Error: Faltan parámetros de cámara o token de sesión.';
             streamStatus.classList.add('error');
-            spinner.style.display = 'none';
         } else {
-            streamStatus.textContent = `Conectando a cámara ${cameraId}...`;
-
-            function fetchStreamFrame() {
-                const requestTimestamp = new Date().getTime(); // 1. Capturamos el timestamp de esta petición
-                const url = `${API_LATEST_FRAME_URL}?camera_id=${cameraId}&session_token=${sessionToken}&_t=${requestTimestamp}`;
-                
-                fetch(url)
-                    .then(response => {
-                        if (response.ok) return response.blob();
-                        throw new Error(`Error del servidor: ${response.status}`);
-                    })
-                    .then(imageBlob => {
-                        // 2. Comprobamos si este frame es más nuevo que el último que mostramos
-                        if (requestTimestamp > lastDisplayedTimestamp) {
-                            lastDisplayedTimestamp = requestTimestamp; // 3. Actualizamos el timestamp del último frame mostrado
-
-                            const imageUrl = URL.createObjectURL(imageBlob);
-                            streamImg.src = imageUrl;
-                            streamImg.onload = () => {
-                                URL.revokeObjectURL(imageUrl);
-                                streamStatus.textContent = `Estado: Conectado a ${cameraId}`;
-                                streamStatus.classList.remove('error');
-                                spinner.style.display = 'none';
-                            };
-                        }
-                        // Si el frame es viejo (llegó tarde), simplemente lo ignoramos.
-                    })
-                    .catch(error => {
-                        streamStatus.textContent = `Error de conexión: ${error.message}`;
-                        streamStatus.classList.add('error');
-                        spinner.style.display = 'none';
-                    });
+            
+            function updateImageSource() {
+                // Creamos un timestamp único para CADA petición. Esto es "cache busting".
+                const timestamp = new Date().getTime();
+                streamImg.src = `/api/latest_frame?camera_id=${cameraId}&session_token=${sessionToken}&_t=${timestamp}`;
             }
 
-            // Iniciar el polling de frames cada 150ms (aprox 6-7 FPS, más estable)
-            setInterval(fetchStreamFrame, 500);
-            fetchStreamFrame(); // Llamada inicial
+            // Manejador para cuando la imagen se carga con éxito
+            streamImg.onload = function() {
+                streamStatus.textContent = `Conectado a ${cameraId}`;
+                streamStatus.classList.remove('error');
+                streamStatus.classList.add('connected');
+            };
+
+            // Manejador para cuando la imagen falla al cargar (ej. la cámara se desconecta)
+            streamImg.onerror = function() {
+                streamStatus.textContent = 'Esperando señal de la cámara...';
+                streamStatus.classList.add('error');
+                streamStatus.classList.remove('connected');
+            };
+
+            // Iniciar el refresco de la imagen cada 200ms (5 FPS)
+            setInterval(updateImageSource, 200);
         }
     </script>
 </body>
