@@ -613,23 +613,27 @@ def latest_frame():
     with frames_lock:
         frame_data_for_camera = latest_frames.get(camera_id)
 
-    # Preparamos la respuesta que vamos a enviar
     response = None
     
-    # Verificamos si hay un frame reciente
     if frame_data_for_camera and (time.time() - frame_data_for_camera['timestamp'].timestamp()) < 15:
-        # Si hay un frame, lo usamos para la respuesta
         response = Response(frame_data_for_camera['frame'], mimetype='image/jpeg')
     else:
-        # Si no, usamos la imagen estática de "no disponible"
         response = Response(STATIC_NO_STREAM_IMAGE_BYTES, mimetype='image/jpeg')
 
-    # --- INICIO DE LA CORRECCIÓN ---
-    # Añadimos las cabeceras a la respuesta para PREVENIR EL CACHÉ
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    # --- INICIO DE LA CORRECCIÓN REFORZADA ---
+    # Le damos al navegador todas las razones posibles para no usar el caché.
+    
+    # 1. Órdenes estándar de no-caché (las que ya teníamos)
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
-    # --- FIN DE LA CORRECCIÓN ---
+    
+    # 2. Órdenes de validación (NUEVAS)
+    # Le decimos que la última modificación fue "justo ahora"
+    response.headers['Last-Modified'] = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
+    # Le damos una "etiqueta de versión" única y aleatoria a cada imagen
+    response.headers['ETag'] = str(time.time()) 
+    # --- FIN DE LA CORRECCIÓN REFORZADA ---
 
     return response
 # ------------------------ FIN API PARA SERVIR EL ÚLTIMO FRAME --------------------
