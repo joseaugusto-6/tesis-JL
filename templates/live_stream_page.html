@@ -1,14 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Video en Vivo - Camara de Seguridad</title>
+    <title>Video en Vivo - AI Security Cam</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        /* --- Importar Fuente --- */
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
 
         body { 
-            /* --- NUEVO: Fondo con gradiente azul/turquesa --- */
             background: linear-gradient(135deg, #00796B, #0288D1);
             display: flex; 
             justify-content: center; 
@@ -19,11 +17,13 @@
             flex-direction: column; 
             overflow: hidden; 
         }
-        h1 {
-            color: white;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        
+        /* --- NUEVO: Estilos para el logo --- */
+        .header-logo {
+            height: 60px; /* Ajusta el tamaño del logo como prefieras */
             margin-bottom: 20px;
         }
+
         .stream-container {
             position: relative;
             width: 90%;
@@ -59,7 +59,6 @@
             color: #ffffff;
         }
         
-        /* --- NUEVO: Estilos para el botón de refrescar --- */
         .refresh-btn {
             margin-top: 15px;
             padding: 8px 20px;
@@ -78,19 +77,20 @@
     </style>
 </head>
 <body>
-    <h1>Video en Vivo</h1>
+    <!-- --- REEMPLAZAMOS EL H1 POR EL LOGO --- -->
+    <img src="{{ url_for('static', filename='images/Logo_IA.png') }}" alt="AI Security Cam Logo" class="header-logo">
+
     <div class="stream-container">
         <img id="liveStream" src="" alt="Cargando video...">
     </div>
     <p class="status" id="streamStatus">Conectando...</p>
     
-    <!-- --- NUEVO: Botón de Refrescar --- -->
-    <button id="refreshButton" class="refresh-btn">Refrescar Imagen</button>
+    <button id="refreshButton" class="refresh-btn">Refrescar Página</button>
 
     <script>
         const streamImg = document.getElementById('liveStream');
         const streamStatus = document.getElementById('streamStatus');
-        const refreshButton = document.getElementById('refreshButton'); // Obtenemos el nuevo botón
+        const refreshButton = document.getElementById('refreshButton');
 
         function getUrlParameter(name) {
             name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
@@ -105,7 +105,7 @@
         if (!cameraId || !sessionToken) {
             streamStatus.textContent = 'Error: Faltan parámetros de cámara o token de sesión.';
             streamStatus.classList.add('error');
-            refreshButton.style.display = 'none'; // Ocultamos el botón si hay error
+            refreshButton.style.display = 'none';
         } else {
             
             function updateImageSource() {
@@ -125,10 +125,10 @@
                 streamStatus.classList.remove('connected');
             };
             
-            // Lógica de refresco de página
+            // --- LÓGICA DEL BOTÓN MODIFICADA ---
             refreshButton.addEventListener('click', function() {
-                streamStatus.textContent = 'Forzando refresco...';
-                updateImageSource(); // Llama a la función para pedir una nueva imagen al instante
+                // Refresca la página completa
+                location.reload();
             });
 
             // Iniciar el refresco automático de la imagen
