@@ -16,17 +16,17 @@
             font-family: 'Poppins', sans-serif;
             flex-direction: column; 
             overflow: hidden; 
+            padding: 20px;
         }
         
-        /* --- NUEVO: Estilos para el logo --- */
         .header-logo {
-            height: 60px; /* Ajusta el tamaño del logo como prefieras */
+            height: 50px; /* Ajusta el tamaño del logo */
             margin-bottom: 20px;
         }
 
         .stream-container {
             position: relative;
-            width: 90%;
+            width: 100%;
             max-width: 800px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.3);
             border-radius: 10px;
@@ -74,11 +74,19 @@
         .refresh-btn:hover {
             background-color: rgba(255, 255, 255, 0.25);
         }
+
+        /* --- NUEVO: Estilo para el texto de ayuda --- */
+        .help-text {
+            margin-top: 10px;
+            font-size: 0.8em;
+            color: rgba(255, 255, 255, 0.6);
+            text-align: center;
+        }
     </style>
 </head>
 <body>
-    <!-- --- REEMPLAZAMOS EL H1 POR EL LOGO --- -->
-    <img src="{{ url_for('static', filename='images/Logo_IA.png') }}" alt="AI Security Cam Logo" class="header-logo">
+    <!-- --- CAMBIO: Ruta del logo actualizada --- -->
+    <img src="{{ url_for('static', filename='images/logowhite.png') }}" alt="AI Security Cam Logo" class="header-logo">
 
     <div class="stream-container">
         <img id="liveStream" src="" alt="Cargando video...">
@@ -86,6 +94,9 @@
     <p class="status" id="streamStatus">Conectando...</p>
     
     <button id="refreshButton" class="refresh-btn">Refrescar Página</button>
+
+    <!-- --- NUEVO: Texto de ayuda --- -->
+    <p class="help-text">Si la imagen se congela, presiona el botón para refrescar.</p>
 
     <script>
         const streamImg = document.getElementById('liveStream');
@@ -125,13 +136,10 @@
                 streamStatus.classList.remove('connected');
             };
             
-            // --- LÓGICA DEL BOTÓN MODIFICADA ---
             refreshButton.addEventListener('click', function() {
-                // Refresca la página completa
                 location.reload();
             });
 
-            // Iniciar el refresco automático de la imagen
             setInterval(updateImageSource, 200);
         }
     </script>
