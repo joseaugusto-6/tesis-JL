@@ -3,321 +3,287 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Security Cam - Seguridad Inteligente para tu Hogar</title>
+    <title>AI Security Cam - Tesis de Grado</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
 
-        section[id] {
-    scroll-margin-top: 120px; /* Ajusta este valor si tu barra es más alta o más baja */
-}
-        /* --- Importar Fuente Profesional --- */
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
-
-        /* --- Variables de Color (Fácil de personalizar) --- */
-       :root {
-    --primary-color: #00796B;   /* Un turquesa oscuro y elegante para títulos e íconos */
-    --secondary-color: #0288D1; /* Un azul vivo para los botones de acción (Descargar, etc.) */
-    --dark-color: #223a44;      /* Un gris azulado oscuro para el texto principal */
-    --light-color: #FFFFFF;     /* Blanco */
-    --gray-background: #F5F7F8; /* Un fondo gris muy claro y neutro para las secciones */
-}
-
-        /* --- Estilos Generales --- */
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
+        :root {
+            --primary-color: #00796B;   /* Turquesa oscuro y elegante */
+            --secondary-color: #0288D1; /* Azul vivo para botones y acentos */
+            --dark-color: #263238;      /* Gris azulado oscuro para texto */
+            --light-color: #FFFFFF;     /* Blanco */
+            --gray-background: #f8f9fa; /* Fondo gris muy claro */
+            --border-color: #e9ecef;    /* Color para bordes sutiles */
         }
 
-        html {
-            scroll-behavior: smooth;
-        }
-
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
         body {
             font-family: 'Poppins', sans-serif;
-            line-height: 1.6;
+            line-height: 1.7;
             color: var(--dark-color);
+            background-color: var(--light-color);
         }
+        .container { max-width: 1100px; margin: 0 auto; padding: 0 2rem; }
+        section { padding: 5rem 0; }
+        section[id] { scroll-margin-top: 80px; }
+        h1, h2, h3 { line-height: 1.3; margin-bottom: 1rem; font-weight: 600; }
+        h1 { font-size: 3.2rem; color: var(--light-color); }
+        h2 { font-size: 2.5rem; text-align: center; color: var(--primary-color); margin-bottom: 3rem; }
+        h3 { font-size: 1.4rem; margin-bottom: 0.75rem; color: var(--dark-color); }
+        p { margin-bottom: 1rem; color: #5a6a74; }
+        a { text-decoration: none; color: var(--secondary-color); }
+        .section-bg { background-color: var(--gray-background); }
 
-        .container {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 0 2rem;
-            
-
-        }
-
-        section {
-            padding: 4rem 0;
-        }
-
-        h1, h2, h3 {
-            line-height: 1.2;
-            margin-bottom: 1rem;
-        }
-
-        h1 { font-size: 3rem; }
-        h2 { font-size: 2.5rem; text-align: center; }
-        h3 { font-size: 1.5rem; }
-
-        a {
-            text-decoration: none;
-            color: var(--primary-color);
-        }
-
-        /* --- Barra de Navegación (Header) --- */
+        /* --- Barra de Navegación --- */
         .navbar {
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 1rem 2rem;
-            background: var(--light-color);
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(10px);
             position: fixed;
             width: 100%;
             top: 0;
             z-index: 1000;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
+        .navbar .logo img { height: 50px; }
+        .navbar ul { display: flex; list-style: none; align-items: center; }
+        .navbar ul li a { padding: 0 1.2rem; font-weight: 600; color: var(--dark-color); transition: color 0.3s ease; }
+        .navbar ul li a:hover { color: var(--primary-color); }
+        .menu-toggle { display: none; font-size: 1.5rem; cursor: pointer; }
 
-        .navbar .logo img {
-            height: 50px; /* <-- AJUSTA EL TAMAÑO DE TU LOGO */
-        }
-
-        .navbar ul {
-            display: flex;
-            list-style: none;
-            align-items: center;
-        }
-
-        .navbar ul li a {
-            padding: 0 1rem;
-            font-weight: 600;
-        }
-
-        .navbar ul li a:hover {
-            color: var(--secondary-color);
-        }
-
+        /* --- Botón Principal --- */
         .btn {
             display: inline-block;
             background: var(--secondary-color);
             color: var(--light-color);
-            padding: 0.8rem 1.5rem;
-            border-radius: 25px;
+            padding: 0.8rem 2rem;
+            border-radius: 50px;
             font-weight: 600;
-            transition: transform 0.2s ease-in-out;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(2, 136, 209, 0.2);
         }
-
         .btn:hover {
-            transform: scale(1.05);
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(2, 136, 209, 0.3);
         }
 
-        /* --- Sección Principal (Hero) --- */
+        /* --- Sección Hero --- */
         #hero {
             display: flex;
             align-items: center;
             justify-content: center;
             text-align: center;
             min-height: 100vh;
-            background: linear-gradient(135deg, #00796B, #0288D1);
-            background-size: cover;
-            background-position: center;
+            background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
             color: var(--light-color);
         }
+        #hero .content p { max-width: 700px; margin: 1rem auto 2.5rem; font-size: 1.2rem; color: rgba(255, 255, 255, 0.9); }
+        #hero .apk-note { margin-top: 1rem; font-size: 0.85rem; color: rgba(255, 255, 255, 0.7); }
 
-        #hero .content h1 {
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        }
-
-        #hero .content p {
-            max-width: 600px;
-            margin: 1rem auto 2rem;
-            font-size: 1.2rem;
-        }
-
-        /* --- Sección "Cómo Funciona" --- */
-        #how-it-works {
-            background: var(--gray-background);
-        }
-        .steps-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 2rem;
-            margin-top: 3rem;
-        }
-        .step {
-            text-align: center;
-            padding: 2rem;
-            background: var(--light-color);
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-        }
-        .step .icon {
-            font-size: 3rem;
-            color: var(--primary-color);
-            margin-bottom: 1rem;
-        }
-
-        /* --- Sección de Características --- */
-        .features-grid {
+        /* --- Tarjetas --- */
+        .grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 2rem;
-            margin-top: 3rem;
         }
-        .feature-card {
+        .card {
+            background: var(--light-color);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 2rem;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            text-align: left;
+        }
+        .card .icon { font-size: 2.5rem; color: var(--primary-color); margin-bottom: 1rem; }
+        .card h3 { color: var(--dark-color); }
+
+        /* --- Guía de Inicio --- */
+        .guide-step {
             display: flex;
             align-items: flex-start;
+            margin-bottom: 2rem;
         }
-        .feature-card .icon {
-            font-size: 2rem;
-            color: var(--primary-color);
-            margin-right: 1rem;
-        }
-
-        /* --- Sección de FAQ --- */
-        #faq {
-            background: var(--gray-background);
-        }
-        .faq-item {
-            margin-bottom: 1rem;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            overflow: hidden;
-        }
-        .faq-item summary {
-            padding: 1rem;
-            background: var(--light-color);
-            font-weight: 600;
-            cursor: pointer;
-            outline: none;
+        .guide-step .step-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--secondary-color);
+            margin-right: 1.5rem;
+            line-height: 1;
         }
 
-        .faq-item div {
-            padding: 1rem;
-            background: #fdfdfd;
-        }
+        /* --- FAQ --- */
+        .faq-item { margin-bottom: 1rem; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
+        .faq-item summary { padding: 1rem 1.5rem; background: var(--light-color); font-weight: 600; cursor: pointer; outline: none; display: flex; justify-content: space-between; align-items: center; }
+        .faq-item summary::after { content: '▼'; transform: scale(0.8); }
+        .faq-item[open] summary::after { content: '▲'; }
+        .faq-item div { padding: 1.5rem; background: #fafcff; }
+        .faq-item h4 { margin: 1.5rem 0 1rem; color: var(--primary-color); border-bottom: 2px solid var(--border-color); padding-bottom: 0.5rem; }
 
         /* --- Footer --- */
-        footer {
-            background: var(--dark-color);
-            color: var(--light-color);
-            text-align: center;
-            padding: 2rem 0;
-        }
-        
-        /* --- Responsive --- */
+        footer { background: var(--dark-color); color: #a0b2bd; text-align: center; padding: 2.5rem 0; }
+        footer p { color: #a0b2bd; }
+        footer a { color: var(--light-color); font-weight: 600; }
+
+        /* --- Diseño Responsivo --- */
         @media(max-width: 768px) {
             h1 { font-size: 2.5rem; }
             h2 { font-size: 2rem; }
-            .navbar { flex-direction: column; }
-            .navbar ul { margin-top: 1rem; }
+            section { padding: 3rem 0; }
+            .navbar { padding: 1rem; }
+            .navbar nav { display: none; flex-direction: column; position: absolute; top: 70px; left: 0; width: 100%; background: var(--light-color); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+            .navbar nav.active { display: flex; }
+            .navbar ul { flex-direction: column; width: 100%; }
+            .navbar ul li { width: 100%; text-align: center; padding: 1rem 0; border-top: 1px solid var(--border-color); }
+            .menu-toggle { display: block; }
         }
-
     </style>
 </head>
 <body>
 
     <header class="navbar">
         <div class="logo">
-            <a href="#"><img src="{{ url_for('static', filename='images/Logo_IA.png') }}" alt="AI Security Cam Logo"></a>
+            <a href="#hero"><img src="{{ url_for('static', filename='images/Logo_IA.png') }}" alt="AI Security Cam Logo"></a>
         </div>
-        <nav>
+        <nav id="nav-menu">
             <ul>
-                <li><a href="#how-it-works">Cómo Funciona</a></li>
-                <li><a href="#features">Características</a></li>
+                <li><a href="#ecosystem">Ecosistema</a></li>
+                <li><a href="#setup-guide">Guía de Inicio</a></li>
                 <li><a href="#faq">FAQ</a></li>
             </ul>
         </nav>
+        <div class="menu-toggle" id="menu-toggle-button">☰</div>
     </header>
 
     <section id="hero">
         <div class="content container">
-            <h1>La Seguridad de tu Hogar, Ahora Inteligente</h1>
-            <p>Recibe alertas en tiempo real en tu móvil, diferencia entre familiares y desconocidos, y mantén el control total desde cualquier lugar.</p>
+            <h1>AI Security Cam</h1>
+            <p>Un sistema de seguridad integral que utiliza Inteligencia Artificial para ofrecer protección proactiva y control total de tu hogar desde cualquier lugar.</p>
             <div>
                 <a href="{{ url_for('static', filename='descargas/AI_Security1_2.apk') }}" class="btn">Descargar para Android</a>
-                <p>Próximamente en IOS...</p> 
+                <p class="apk-note">Nota: Tu teléfono podría mostrar una advertencia de seguridad. Nuestra app es segura, solo necesitas permitir la instalación.</p>
             </div>
         </div>
     </section>
 
-    <section id="how-it-works" class="container">
-        <h2>Simple en 3 Pasos</h2>
-        <div class="steps-grid">
-            <div class="step">
-                <div class="icon">🏡</div>
-                <h3>1. Instala</h3>
-                <p>Conecta cualquier webcam a un computador o Raspberry Pi y enlaza tu dispositivo a la app móvil.</p>
-            </div>
-            <div class="step">
-                <div class="icon">👨‍👩‍👧‍👦</div>
-                <h3>2. Registra</h3>
-                <p>Desde la app, añade los rostros de tus familiares y personas de confianza en segundos.</p>
-            </div>
-            <div class="step">
-                <div class="icon">🔔</div>
-                <h3>3. Protege</h3>
-                <p>¡Listo! Recibe notificaciones inteligentes directamente en tu teléfono cuando se detecte un evento.</p>
-            </div>
-        </div>
-    </section>
-
-    <section id="features" class="container">
-        <h2>Todo lo que Necesitas para tu Tranquilidad</h2>
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="icon">💡</div>
-                <div>
-                    <h3>Detección Facial con IA</h3>
-                    <p>Diferencia entre un rostro conocido y uno extraño, reduciendo las falsas alarmas y notificándote solo lo que importa.</p>
+    <section id="ecosystem" class="section-bg">
+        <div class="container">
+            <h2>El Ecosistema del Proyecto</h2>
+            <div class="grid">
+                <div class="card">
+                    <div class="icon">📷</div>
+                    <h3>La Cámara (Cliente IoT)</h3>
+                    <p>Actúa como el ojo del sistema. Su única misión es capturar imágenes y enviarlas al backend para su análisis, además de obedecer órdenes remotas vía MQTT.</p>
                 </div>
-            </div>
-            <div class="feature-card">
-                <div class="icon">📲</div>
-                <div>
-                    <h3>Control Total Remoto</h3>
-                    <p>Gestiona los modos de tus cámaras, ve el video en vivo y revisa el historial desde cualquier parte del mundo.</p>
+                <div class="card">
+                    <div class="icon">🧠</div>
+                    <h3>El Backend (Cerebro en la Nube)</h3>
+                    <p>El centro neurálgico en Google Cloud. Gestiona la API, la base de datos (Firestore), el almacenamiento (Storage) y la comunicación en tiempo real (MQTT), todo protegido por Nginx y HTTPS.</p>
                 </div>
-            </div>
-            <div class="feature-card">
-                <div class="icon">⚙️</div>
-                <div>
-                    <h3>Notificaciones Personalizables</h3>
-                    <p>Elige si quieres recibir todas las alertas o solo las más críticas. Tú tienes el control sobre el nivel de notificaciones.</p>
-                </div>
-            </div>
-            <div class="feature-card">
-                <div class="icon">🛡️</div>
-                <div>
-                    <h3>Privacidad Garantizada</h3>
-                    <p>Tus imágenes y datos se procesan y almacenan en nuestra infraestructura segura en Google Cloud Platform, utilizando protocolos de encriptación y garantizando que solo tú tengas acceso a tu información.</p>
+                <div class="card">
+                    <div class="icon">🤖</div>
+                    <h3>Workers de IA (Análisis Profundo)</h3>
+                    <p>Procesos en segundo plano que analizan las imágenes. Usan modelos como YOLO, MTCNN y FaceNet para detectar personas, diferenciar rostros y generar alertas inteligentes.</p>
                 </div>
             </div>
         </div>
     </section>
 
- 
-    <section id="faq" class="container">
-        <h2>Preguntas Frecuentes</h2>
-        <details class="faq-item">
-            <summary>¿Qué necesito para usarlo?</summary>
-            <div><p>Solo necesitas una webcam estándar, un computador (Windows/Linux) o una Raspberry Pi para que actúe como cámara, y un smartphone (Android/iOS) para instalar la aplicación de control.</p></div>
-        </details>
-        <details class="faq-item">
-            <summary>¿Mis datos están seguros?</summary>
-            <div><p>Sí. La seguridad es nuestra máxima prioridad. Toda tu información, desde las imágenes hasta los eventos, se encripta tanto en tránsito como en reposo y se gestiona en nuestra infraestructura dedicada en Google Cloud. Nuestra estricta política de privacidad garantiza que tus datos se usan únicamente para el funcionamiento de tu servicio de seguridad.</p></div>
-        </details>
-        <details class="faq-item">
-                        <summary>¿Quienes hicieron este proyecto?</summary>
-                <div><p>Los estudiantes de ingeniería en Telecomunicaciones de la UCAB: José Augusto Ramos y Luis Antonio Hércules. eñEl presente proyecto es el resultado de nuestra tesis, con la ayuda de nuestro tutor: Marco Dujmoviç.  </p></div>
-        </details>
+    <!-- ======== NUEVA SECCIÓN: GUÍA DE INICIO RÁPIDO ======== -->
+    <section id="setup-guide">
+        <div class="container">
+            <h2>Guía de Inicio Rápido</h2>
+            <div class="guide-step">
+                <div class="step-number">1</div>
+                <div>
+                    <h3>Descarga e Instala la App</h3>
+                    <p>Usa el botón de descarga para obtener el archivo APK. Instálalo en tu smartphone Android y crea tu cuenta de usuario. ¡Es el primer paso para tomar el control!</p>
+                </div>
+            </div>
+            <div class="guide-step">
+                <div class="step-number">2</div>
+                <div>
+                    <h3>Configura tu Cámara</h3>
+                    <p>Conecta una webcam a un computador o Raspberry Pi. Deberás ejecutar nuestro script de cámara, que lo vincula de forma segura a tu cuenta a través de un `device_id` único.</p>
+                </div>
+            </div>
+            <div class="guide-step">
+                <div class="step-number">3</div>
+                <div>
+                    <h3>Registra los Rostros de Confianza</h3>
+                    <p>Desde la aplicación, ve a la sección "Registrar Rostro". La app te guiará para tomar varias fotos de tus familiares y personas de confianza. Esto le enseñará al sistema a quién reconocer.</p>
+                </div>
+            </div>
+            <div class="guide-step">
+                <div class="step-number">4</div>
+                <div>
+                    <h3>¡Listo para Proteger!</h3>
+                    <p>Tu sistema ya está funcionando. Recibirás notificaciones inteligentes, podrás ver el video en vivo y gestionar todo desde la palma de tu mano. ¡Bienvenido a la seguridad inteligente!</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ======== PREGUNTAS FRECUENTES (FAQ) - ACTUALIZADO ======== -->
+    <section id="faq" class="section-bg">
+        <div class="container">
+            <h2>Preguntas Frecuentes</h2>
+            
+            <h4>Para Usuarios</h4>
+            <details class="faq-item">
+                <summary>¿Qué necesito para empezar a usar el sistema?</summary>
+                <div><p>Solo necesitas tres cosas: una webcam estándar, un computador o Raspberry Pi que funcionará como el cerebro de tu cámara, y tu smartphone para instalar nuestra aplicación de control.</p></div>
+            </details>
+            <details class="faq-item">
+                <summary>¿Mis fotos y datos están seguros?</summary>
+                <div><p>Sí. La seguridad y tu privacidad son nuestra máxima prioridad. Toda tu información se encripta y se gestiona en nuestra infraestructura dedicada en Google Cloud, y nuestras políticas garantizan que solo tú tengas acceso a los eventos de tu hogar.</p></div>
+            </details>
+            <details class="faq-item">
+                <summary>¿Cómo registro a un familiar o persona de confianza?</summary>
+                <div><p>Es muy fácil. Desde el dashboard de la aplicación, ve a la sección "Registrar Rostro". La app te guiará para tomar varias fotos de la persona, y nuestro sistema se encargará del resto para poder reconocerla en el futuro.</p></div>
+            </details>
+             <details class="faq-item">
+                <summary>¿Por qué no recibí una notificación si llegó mi familiar?</summary>
+                <div><p>Probablemente tienes configuradas tus notificaciones para "Solo Alertas Críticas". Este modo te avisa únicamente si se detecta un desconocido o una alarma, ignorando los eventos de personas conocidas para no saturarte. Puedes cambiar esta preferencia en la pantalla de "Ajustes de Notificaciones".</p></div>
+            </details>
+
+            <h4>Técnicas</h4>
+            <details class="faq-item">
+                <summary>¿Cómo garantiza el sistema que los datos de un cliente no se mezclen con los de otro?</summary>
+                <div><p>La arquitectura es inherentemente multi-cliente. Cada imagen está vinculada a un `device_id`. El worker de IA primero consulta la base de datos para identificar al propietario y luego carga **únicamente** los embeddings faciales (`.npy`) que pertenecen a ese usuario para la comparación, aislando completamente los datos de cada cuenta.</p></div>
+            </details>
+            <details class="faq-item">
+                <summary>¿Qué sucede si en una imagen hay personas conocidas y desconocidas?</summary>
+                <div><p>El sistema opera con un principio de "seguridad primero". La detección de al menos un rostro desconocido tiene mayor prioridad. Se generará una alerta de "desconocido", pero la imagen guardada mostrará recuadros verdes para los conocidos y rojos para los desconocidos, dando el contexto completo.</p></div>
+            </details>
+            <details class="faq-item">
+                <summary>¿Cómo maneja el sistema la desconexión abrupta de una cámara?</summary>
+                <div><p>Se implementó el protocolo "Last Will and Testament" (LWT) de MQTT. Si la cámara pierde la conexión, el broker MQTT publica automáticamente un mensaje de estado "Offline", permitiendo al backend detectar la desconexión en aproximadamente 15 segundos.</p></div>
+            </details>
+            <details class="faq-item">
+                <summary>¿Cómo funciona la detección de "rostro cubierto"?</summary>
+                <div><p>No se basa en una sola imagen, sino en un patrón. Si el sistema detecta una persona (con YOLO) pero no un rostro (con MTCNN) varias veces seguidas en un corto período, se supera un umbral y se genera una alarma específica de comportamiento sospechoso.</p></div>
+            </details>
+        </div>
     </section>
 
     <footer>
         <div class="container">
-            <p>Un Proyecto de José Augusto Ramos y Luis Antonio Hércules - UCAB - 2025</p>
+            <p>Un Proyecto de Tesis de Grado de José Augusto Ramos y Luis Antonio Hércules</p>
+            <p>Tutor: Marco Dujmovic - UCAB - 2025</p>
         </div>
     </footer>
+
+    <script>
+        const menuToggle = document.getElementById('menu-toggle-button');
+        const navMenu = document.getElementById('nav-menu');
+        menuToggle.addEventListener('click', () => {
+            navMenu.classList.toggle('active');
+        });
+    </script>
 
 </body>
 </html>
