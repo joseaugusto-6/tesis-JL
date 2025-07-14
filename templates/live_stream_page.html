@@ -4,24 +4,35 @@
     <title>Video en Vivo - Camara de Seguridad</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
+        /* --- Importar Fuente --- */
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
+
         body { 
-            background-color: #212121; 
+            /* --- NUEVO: Fondo con gradiente azul/turquesa --- */
+            background: linear-gradient(135deg, #00796B, #0288D1);
             display: flex; 
             justify-content: center; 
             align-items: center; 
             min-height: 100vh; 
             margin: 0; 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Poppins', sans-serif;
             flex-direction: column; 
             overflow: hidden; 
+        }
+        h1 {
+            color: white;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            margin-bottom: 20px;
         }
         .stream-container {
             position: relative;
             width: 90%;
             max-width: 800px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            border-radius: 10px;
         }
         #liveStream { 
-            border: 2px solid #424242; 
+            border: 3px solid rgba(255, 255, 255, 0.2); 
             width: 100%; 
             height: auto; 
             display: block; 
@@ -35,8 +46,8 @@
             font-size: 1em; 
             font-weight: 500;
             color: #e0e0e0; 
-            background-color: rgba(255, 255, 255, 0.1);
-            transition: background-color 0.3s ease;
+            background-color: rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
         }
         .status.error { 
             color: #ffffff; 
@@ -47,27 +58,46 @@
             background-color: #388e3c;
             color: #ffffff;
         }
+        
+        /* --- NUEVO: Estilos para el botón de refrescar --- */
+        .refresh-btn {
+            margin-top: 15px;
+            padding: 8px 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            color: white;
+            background-color: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 20px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        .refresh-btn:hover {
+            background-color: rgba(255, 255, 255, 0.25);
+        }
     </style>
 </head>
 <body>
+    <h1>Video en Vivo</h1>
     <div class="stream-container">
         <img id="liveStream" src="" alt="Cargando video...">
     </div>
     <p class="status" id="streamStatus">Conectando...</p>
+    
+    <!-- --- NUEVO: Botón de Refrescar --- -->
+    <button id="refreshButton" class="refresh-btn">Refrescar Imagen</button>
 
     <script>
         const streamImg = document.getElementById('liveStream');
         const streamStatus = document.getElementById('streamStatus');
+        const refreshButton = document.getElementById('refreshButton'); // Obtenemos el nuevo botón
 
-        // --- INICIO DE LA CORRECCIÓN ---
-        // Volvemos a la función original para leer parámetros, que es más robusta.
         function getUrlParameter(name) {
             name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
             var regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
             var results = regex.exec(location.search);
             return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
         };
-        // --- FIN DE LA CORRECCIÓN ---
 
         const cameraId = getUrlParameter('camera_id');
         const sessionToken = getUrlParameter('session_token');
@@ -75,29 +105,33 @@
         if (!cameraId || !sessionToken) {
             streamStatus.textContent = 'Error: Faltan parámetros de cámara o token de sesión.';
             streamStatus.classList.add('error');
+            refreshButton.style.display = 'none'; // Ocultamos el botón si hay error
         } else {
             
             function updateImageSource() {
-                // Creamos un timestamp único para CADA petición. Esto es "cache busting".
                 const timestamp = new Date().getTime();
                 streamImg.src = `/api/latest_frame?camera_id=${cameraId}&session_token=${sessionToken}&_t=${timestamp}`;
             }
 
-            // Manejador para cuando la imagen se carga con éxito
             streamImg.onload = function() {
                 streamStatus.textContent = `Conectado a ${cameraId}`;
                 streamStatus.classList.remove('error');
                 streamStatus.classList.add('connected');
             };
 
-            // Manejador para cuando la imagen falla al cargar (ej. la cámara se desconecta)
             streamImg.onerror = function() {
                 streamStatus.textContent = 'Esperando señal de la cámara...';
                 streamStatus.classList.add('error');
                 streamStatus.classList.remove('connected');
             };
+            
+            // Lógica de refresco de página
+            refreshButton.addEventListener('click', function() {
+                streamStatus.textContent = 'Forzando refresco...';
+                updateImageSource(); // Llama a la función para pedir una nueva imagen al instante
+            });
 
-            // Iniciar el refresco de la imagen cada 200ms (5 FPS)
+            // Iniciar el refresco automático de la imagen
             setInterval(updateImageSource, 200);
         }
     </script>
