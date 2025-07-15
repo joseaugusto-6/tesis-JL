@@ -88,46 +88,46 @@ def on_mqtt_connect_flask(client, userdata, flags, rc):
         print(f"MQTT (Flask): Falló la conexión, código de retorno {rc}\n")
 
 def on_mqtt_message_flask(client, userdata, msg):
-    global camera_status # Acceder a la variable global
+    global camera_status
     topic = msg.topic
     payload = msg.payload.decode("utf-8")
+    camera_id = topic.split('/')[-1]
 
-    if topic.startswith("camera/status/"):
-        camera_id = topic.split('/')[-1]
+    with camera_status_lock:
+        # Obtenemos el estado actual o creamos uno nuevo si no existe
+        current_cam_status = camera_status.get(camera_id, {})
 
-        # --- INICIO DE LA CORRECCIÓN CON REGEX ---
-        # Usamos regex para extraer los valores de forma segura, ignorando espacios.
-        # r'Modo:\s*([\w_]+)' busca "Modo:", luego cualquier espacio (\s*), y captura el nombre del modo.
-        mode_match = re.search(r'Modo:\s*([\w_]+)', payload)
-        # r'Power:\s*(ON|OFF)' busca "Power:", cualquier espacio, y captura ON u OFF.
-        power_match = re.search(r'Power:\s*(ON|OFF)', payload, re.IGNORECASE) # IGNORECASE por si acaso
+        # --- INICIO DE LA LÓGICA CORREGIDA ---
 
-        mode_status = mode_match.group(1) if mode_match else "UNKNOWN"
-        power_status_str = power_match.group(1) if power_match else "OFF"
+        # 1. Manejamos el caso especial del "Testamento" (LWT)
+        if payload == "LWT_OFFLINE":
+            print(f"MQTT (Flask): LWT recibido de {camera_id}. Marcando como offline.")
+            # Al recibir el LWT, forzamos un timestamp muy antiguo.
+            # Esto hará que la comprobación de 'is_active' falle inmediatamente.
+            current_cam_status['is_on'] = False
+            current_cam_status['timestamp'] = datetime.fromtimestamp(0) # Fecha muy en el pasado
         
-        # Convertimos el string "ON" a un booleano True.
-        power_status = (power_status_str.upper() == "ON")
-        # --- FIN DE LA CORRECCIÓN ---
-
-        with camera_status_lock:
-            current_cam_status = camera_status.get(camera_id, {})
+        # 2. Manejamos los reportes de estado normales
+        else:
+            print(f"MQTT (Flask): Reporte de estado normal recibido de {camera_id}.")
+            mode_match = re.search(r'Modo:\s*([\w_]+)', payload)
+            power_match = re.search(r'Power:\s*(ON|OFF)', payload, re.IGNORECASE)
+            
+            mode_status = mode_match.group(1) if mode_match else "UNKNOWN"
+            power_status_str = power_match.group(1) if power_match else "OFF"
+            
             current_cam_status['mode'] = mode_status
-            current_cam_status['is_on'] = power_status # ¡Ahora con el valor booleano correcto!
+            current_cam_status['is_on'] = (power_status_str.upper() == "ON")
+            # Solo para reportes normales, actualizamos el timestamp a la hora actual
             current_cam_status['timestamp'] = datetime.now()
-            camera_status[camera_id] = current_cam_status
 
-        # Este log ahora debería mostrar "Power: True" cuando corresponda.
-        print(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {mode_status}, Power: {power_status}")
+        # Guardamos el estado actualizado
+        camera_status[camera_id] = current_cam_status
+        
+        # --- FIN DE LA LÓGICA CORREGIDA ---
 
-flask_mqtt_client.on_connect = on_mqtt_connect_flask
-flask_mqtt_client.on_message = on_mqtt_message_flask # Añade la función on_message
+        print(f"MQTT (Flask): Estado final de {camera_id} - is_on: {current_cam_status.get('is_on')}, timestamp: {current_cam_status.get('timestamp')}")
 
-try:
-    flask_mqtt_client.connect(MQTT_BROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
-    flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado
-    print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar/suscribir.")
-except Exception as e:
-    print(f"MQTT (Flask): Error al conectar el cliente MQTT: {e}")
 
 # ---------------------- FIRESTORE USUARIOS --------------------------
 def firestore_user_exists(email):
