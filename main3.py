@@ -536,6 +536,8 @@ def stream_upload():
         
         frame_file = request.files['frame']
         camera_id = request.form.get('camera_id')
+        # Leemos el modo que nos envía la cámara
+        camera_mode = request.form.get('mode', 'STREAMING_MODE') 
 
         if not camera_id:
             return jsonify({"error": "Falta el camera_id."}), 400
@@ -544,19 +546,27 @@ def stream_upload():
         if not frame_data:
             return jsonify({"error": "El frame de video está vacío."}), 400
 
-        # --- LÓGICA CON REDIS ---
-        # Guardamos el frame en Redis. La clave será, por ejemplo, "frame:camera001"
+        # --- Lógica de Redis (para el stream en vivo) ---
+        # Esto se hace siempre, para que el stream en vivo funcione
         redis_key = f"frame:{camera_id}"
         redis_client.set(redis_key, frame_data)
-        # Le damos un tiempo de expiración para que no se quede para siempre si la cámara se apaga
-        redis_client.expire(redis_key, 15) 
+        redis_client.expire(redis_key, 15)
         
-        app.logger.info(f"Frame de {camera_id} recibido y guardado en Redis.")
+        # --- Lógica de Firebase Storage (SOLO para la IA) ---
+        # Solo guardamos la imagen para la IA si la cámara está en Modo Captura
+        if camera_mode == 'CAPTURE_MODE':
+            now_str = datetime.now(CARACAS_TIMEZONE).strftime('%Y%m%d_%H%M%S')
+            filename = f"{camera_id}_{now_str}.jpg"
+            blob_path = f"uploads/{camera_id}/{filename}"
+            bucket.blob(blob_path).upload_from_string(frame_data, content_type='image/jpeg')
+            app.logger.info(f"Frame de {camera_id} en MODO CAPTURA guardado en Storage para análisis.")
+        
         return jsonify({"message": "Frame recibido."}), 200
 
     except Exception as e:
         app.logger.error(f"Error en stream_upload: {e}")
         return jsonify({"error": "Error interno del servidor."}), 500
+
 # ------------------------ FIN API PARA RECIBIR STREAM DE PC ---------------------------
 
 # ------------------------ API PARA LLAMAR GCF Y ENVIAR FCM (SIMULADA AHORA) --------------------
