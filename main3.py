@@ -232,6 +232,34 @@ def api_register():
         app.logger.error(f"Error al registrar usuario: {e}")
         return jsonify({"msg": f"Error al registrar usuario: {str(e)}"}), 500
 
+@app.route('/api/logout', methods=['POST'])
+@jwt_required()
+def api_logout():
+    """
+    Cierra la sesión de un dispositivo eliminando su token FCM de la base de datos.
+    """
+    try:
+        current_user_email = get_jwt_identity()
+        data = request.json
+        fcm_token_to_remove = data.get('fcm_token')
+
+        if not fcm_token_to_remove:
+            return jsonify({"msg": "Falta el token FCM a eliminar."}), 400
+
+        user_doc_ref = db.collection('usuarios').document(current_user_email)
+        
+        # Usamos ArrayRemove para eliminar el token específico de la lista en Firestore.
+        user_doc_ref.update({
+            'fcm_tokens': firestore.ArrayRemove([fcm_token_to_remove])
+        })
+        
+        app.logger.info(f"Token FCM eliminado para el usuario {current_user_email} al cerrar sesión.")
+        return jsonify({"msg": "Token FCM eliminado. Sesión cerrada en este dispositivo."}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error durante el logout para {current_user_email}: {e}")
+        return jsonify({"msg": "Error interno del servidor durante el cierre de sesión."}), 500
+
 @app.route("/api/protected", methods=["GET"])
 @jwt_required()
 def protected():
