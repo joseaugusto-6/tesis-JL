@@ -95,12 +95,6 @@ def on_mqtt_message_flask(client, userdata, msg):
     if topic.startswith("camera/status/"):
         camera_id = topic.split('/')[-1]
 
-        if payload == "LWT_OFFLINE":
-            app.logger.info(f"MQTT-LWT: LWT recibido de {camera_id}. Marcando como offline.")
-            current_cam_status['is_on'] = False
-            # Forzamos un timestamp muy antiguo para que 'is_active' falle inmediatamente.
-            current_cam_status['timestamp'] = datetime.fromtimestamp(0)
-            
         # --- INICIO DE LA CORRECCIÓN CON REGEX ---
         # Usamos regex para extraer los valores de forma segura, ignorando espacios.
         # r'Modo:\s*([\w_]+)' busca "Modo:", luego cualquier espacio (\s*), y captura el nombre del modo.
