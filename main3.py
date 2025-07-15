@@ -405,33 +405,41 @@ def get_dashboard_data():
 @jwt_required()
 def get_user_devices():
     current_user_email = get_jwt_identity()
-
     user_doc_ref = db.collection('usuarios').document(current_user_email)
     user_doc = user_doc_ref.get()
 
     if not user_doc.exists:
-        app.logger.warning(f"get_user_devices: User {current_user_email} not found.")
-        return jsonify({"msg": "Usuario no encontrado en la base de datos."}), 404
+        return jsonify({"msg": "Usuario no encontrado."}), 404
 
     user_data = user_doc.to_dict()
-    # Obtiene la lista de dispositivos del usuario desde Firestore
     devices_from_firestore = user_data.get('devices', []) 
 
-    # Lista para almacenar los dispositivos con su estado
     devices_with_status = []
-    with camera_status_lock: # Acceder al diccionario global de estados de cámara
+    with camera_status_lock:
         for device_id in devices_from_firestore:
-            status_info = camera_status.get(device_id) # Obtener el estado de la cámara
-            mode = status_info['mode'] if status_info else 'UNKNOWN'
-            # Puedes añadir más detalles aquí si los necesitas, ej. timestamp del estado
+            status_info = camera_status.get(device_id)
+            
+            # --- INICIO DE LA CORRECCIÓN ---
+            
+            # 1. El estado 'is_on' depende únicamente del último mensaje recibido.
+            is_on = status_info.get('is_on', False) if status_info else False
+            
+            # 2. El estado 'is_active' (Online/Offline) depende únicamente de si el último mensaje es reciente.
+            #    Son dos conceptos independientes.
+            is_active = (
+                status_info is not None and
+                (datetime.now() - status_info['timestamp']).total_seconds() < 20
+            )
+            # --- FIN DE LA CORRECCIÓN ---
+            
             devices_with_status.append({
                 'id': device_id,
-                'mode': mode,
-                'is_active': status_info is not None and (datetime.now() - status_info['timestamp']).total_seconds() < 20, # Considerar activa si el último reporte es de hace menos de 60s
-                'is_on': status_info['is_on'] if status_info and 'is_on' in status_info else False
+                'mode': status_info.get('mode', 'UNKNOWN') if status_info else 'UNKNOWN',
+                'is_active': is_active,
+                'is_on': is_on
             })
 
-    return jsonify({"devices": devices_with_status}), 200 # Devuelve una lista de diccionarios), 200
+    return jsonify({"devices": devices_with_status}), 200
 
 # ------------------------ API AÑADIR NUEVO DISPOSITIVO -----------------------
 @app.route('/api/add_device', methods=['POST'])
