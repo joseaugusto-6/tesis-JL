@@ -79,51 +79,47 @@ CARACAS_TIMEZONE = timezone(timedelta(hours=-4))
 flask_mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID_FLASK, clean_session=True)
 
 def on_mqtt_message_flask(client, userdata, msg):
-    global camera_status
-    topic = msg.topic
-    payload = msg.payload.decode("utf-8")
-    
-    # 1. Nos aseguramos de que solo procesamos mensajes del tópico de estado
-    if not topic.startswith("camera/status/"):
-        return # Ignoramos cualquier otro mensaje
-
-    camera_id = topic.split('/')[-1]
-
-    with camera_status_lock:
-        # Obtenemos el estado actual o creamos uno nuevo si no existe
-        current_cam_status = camera_status.get(camera_id, {})
-
-        # DEBUGGING: Imprimir el payload crudo para ver qué llega
-        print(f"MQTT (Flask) DEBUG: Mensaje de ESTADO recibido en '{topic}' con payload: '{payload}'")
-
-        # 2. Manejamos el caso especial del "Testamento" (LWT)
-        if payload == "LWT_OFFLINE":
-            print(f"MQTT (Flask): LWT recibido de {camera_id}. Marcando como offline.")
-            current_cam_status['is_on'] = False
-            # Forzamos un timestamp muy antiguo para que 'is_active' falle inmediatamente.
-            current_cam_status['timestamp'] = datetime.fromtimestamp(0)
+    # Usamos 'with app.app_context()' para asegurar que tenemos acceso al logger de Flask
+    with app.app_context():
+        global camera_status
+        topic = msg.topic
+        payload = msg.payload.decode("utf-8")
         
-        # 3. Manejamos los reportes de estado normales
-        else:
-            print(f"MQTT (Flask): Procesando reporte de estado normal de {camera_id}.")
-            mode_match = re.search(r'Modo:\s*([\w_]+)', payload)
-            power_match = re.search(r'Power:\s*(ON|OFF)', payload, re.IGNORECASE)
+        # 1. Nos aseguramos de que solo procesamos mensajes del tópico de estado
+        if not topic.startswith("camera/status/"):
+            return
+
+        camera_id = topic.split('/')[-1]
+
+        # DEBUGGING: Usamos el logger de Flask para ver el payload crudo
+        app.logger.info(f"MQTT-DEBUG: Mensaje de ESTADO recibido en '{topic}' con payload: '{payload}'")
+
+        with camera_status_lock:
+            current_cam_status = camera_status.get(camera_id, {})
+
+            # 2. Manejamos el caso especial del "Testamento" (LWT)
+            if payload == "LWT_OFFLINE":
+                app.logger.info(f"MQTT-LWT: LWT recibido de {camera_id}. Marcando como offline.")
+                current_cam_status['is_on'] = False
+                current_cam_status['timestamp'] = datetime.fromtimestamp(0)
             
-            # Solo actualizamos si el formato del mensaje es el que esperamos
-            if mode_match and power_match:
-                current_cam_status['mode'] = mode_match.group(1)
-                current_cam_status['is_on'] = (power_match.group(1).upper() == "ON")
-                # Solo para reportes normales y válidos, actualizamos el timestamp a la hora actual
-                current_cam_status['timestamp'] = datetime.now()
-                print(f"MQTT (Flask) SUCCESS: Estado de {camera_id} actualizado correctamente.")
+            # 3. Manejamos los reportes de estado normales
             else:
-                # Si el mensaje no tiene el formato esperado, lo ignoramos pero lo reportamos
-                print(f"MQTT (Flask) WARN: Payload no reconocido para {camera_id}: '{payload}'. No se actualiza el timestamp.")
+                mode_match = re.search(r'Modo:\s*([\w_]+)', payload)
+                power_match = re.search(r'Power:\s*(ON|OFF)', payload, re.IGNORECASE)
+                
+                if mode_match and power_match:
+                    app.logger.info(f"MQTT-UPDATE: Procesando reporte de estado normal de {camera_id}.")
+                    current_cam_status['mode'] = mode_match.group(1)
+                    current_cam_status['is_on'] = (power_match.group(1).upper() == "ON")
+                    current_cam_status['timestamp'] = datetime.now()
+                else:
+                    app.logger.warning(f"MQTT-WARN: Payload no reconocido para {camera_id}: '{payload}'. No se actualiza el estado.")
 
-        # Guardamos el estado actualizado
-        camera_status[camera_id] = current_cam_status
-        
-        print(f"MQTT (Flask): Estado final en memoria para {camera_id} - is_on: {current_cam_status.get('is_on')}, timestamp: {current_cam_status.get('timestamp')}")
+            # Guardamos el estado actualizado
+            camera_status[camera_id] = current_cam_status
+            
+            app.logger.info(f"MQTT-FINAL_STATE: Estado en memoria para {camera_id} - is_on: {current_cam_status.get('is_on')}, timestamp: {current_cam_status.get('timestamp')}")
 
 
 # ---------------------- FIRESTORE USUARIOS --------------------------
