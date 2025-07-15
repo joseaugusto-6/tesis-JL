@@ -110,7 +110,7 @@ def on_mqtt_message_flask(client, userdata, msg):
             # 2. Manejamos el caso especial del "Testamento" (LWT) para desconexión
             if payload == "LWT_OFFLINE":
                 app.logger.info(f"MQTT-LWT: LWT recibido de {camera_id}. Marcando como offline.")
-                current_cam_status['is_on'] = False
+                # No cambiamos 'is_on'. Dejamos el último estado conocido.
                 # Forzamos un timestamp muy antiguo para que 'is_active' falle inmediatamente.
                 current_cam_status['timestamp'] = datetime.fromtimestamp(0)
             
@@ -132,10 +132,25 @@ def on_mqtt_message_flask(client, userdata, msg):
                     # porque su timestamp fue actualizado.
                     app.logger.warning(f"MQTT-WARN: Payload no reconocido para {camera_id}: '{payload}'. Solo se actualizó el timestamp de actividad.")
 
-            # Guardamos el estado actualizado
+        with camera_status_lock:
+            current_cam_status = camera_status.get(camera_id, {})
+            current_cam_status['mode'] = mode_status
+            current_cam_status['is_on'] = power_status # ¡Ahora con el valor booleano correcto!
+            current_cam_status['timestamp'] = datetime.now()
             camera_status[camera_id] = current_cam_status
-            
-            app.logger.info(f"MQTT-FINAL_STATE: Estado en memoria para {camera_id} - is_on: {current_cam_status.get('is_on')}, timestamp: {current_cam_status.get('timestamp')}")
+
+        # Este log ahora debería mostrar "Power: True" cuando corresponda.
+        print(f"MQTT (Flask): Estado de {camera_id} actualizado a Modo: {mode_status}, Power: {power_status}")
+
+flask_mqtt_client.on_connect = on_mqtt_connect_flask
+flask_mqtt_client.on_message = on_mqtt_message_flask # Añade la función on_message
+
+try:
+    flask_mqtt_client.connect(MQTT_BROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
+    flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado
+    print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar/suscribir.")
+except Exception as e:
+    print(f"MQTT (Flask): Error al conectar el cliente MQTT: {e}")
 
 # ---------------------- FIRESTORE USUARIOS --------------------------
 def firestore_user_exists(email):
