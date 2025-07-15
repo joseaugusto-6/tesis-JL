@@ -243,7 +243,7 @@ def main():
             print("Intentando conectar al broker MQTT...")
             
             # Configura el "Last Will" ANTES de intentar conectar.
-            lwt_payload = f"Modo: {current_mode}; Power: OFF" 
+            lwt_payload = "LWT_OFFLINE" 
             client_mqtt_instance.will_set(MQTT_STATUS_TOPIC, payload=lwt_payload, qos=1, retain=True)
             
             # Intenta la conexión con un keepalive de 10 segundos
