@@ -3,7 +3,7 @@ import re
 import numpy as np
 from flask import Flask, request, render_template, redirect, url_for, session, flash, jsonify, Response
 from google.cloud import storage, firestore
-import paho.mqtt.client as mqtt # <-- ¡Añade esto para MQTT!
+import paho.mqtt.client as mqtt # 
 from datetime import datetime, timedelta, timezone 
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
@@ -77,6 +77,15 @@ CARACAS_TIMEZONE = timezone(timedelta(hours=-4))
 
 # Inicializar cliente MQTT para Flask
 flask_mqtt_client = mqtt.Client(client_id=MQTT_CLIENT_ID_FLASK, clean_session=True)
+flask_mqtt_client.on_connect = on_mqtt_connect_flask
+flask_mqtt_client.on_message = on_mqtt_message_flask # Añade la función on_message
+
+try:
+    flask_mqtt_client.connect(MQTT_BROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
+    flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado
+    print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar/suscribir.")
+except Exception as e:
+    print(f"MQTT (Flask): Error al conectar el cliente MQTT: {e}")
 
 def on_mqtt_connect_flask(client, userdata, flags, rc):
     if rc == 0:
@@ -137,15 +146,9 @@ def on_mqtt_message_flask(client, userdata, msg):
             
             app.logger.info(f"MQTT-FINAL_STATE: Estado en memoria para {camera_id} - is_on: {current_cam_status.get('is_on')}, timestamp: {current_cam_status.get('timestamp')}")
 
-flask_mqtt_client.on_connect = on_mqtt_connect_flask
-flask_mqtt_client.on_message = on_mqtt_message_flask # Añade la función on_message
-
-try:
-    flask_mqtt_client.connect(MQTT_BROKER_IP_INTERNAL, MQTT_BROKER_PORT_INTERNAL, 60)
-    flask_mqtt_client.loop_start() # Iniciar el bucle de MQTT en un hilo separado
-    print("MQTT (Flask): Cliente iniciado en un hilo separado para publicar/suscribir.")
-except Exception as e:
-    print(f"MQTT (Flask): Error al conectar el cliente MQTT: {e}")
+# ==============================================================================
+# SECCIÓN DE FUNCIONES AUXILIARES DE FIRESTORE
+# ------------------------------------------------------------------------------
 
 # ---------------------- FIRESTORE USUARIOS --------------------------
 def firestore_user_exists(email):
@@ -196,6 +199,12 @@ def upload_image():
         return jsonify({"message": "Imagen recibida", "filename": filename}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ==============================================================================
+# SECCIÓN DE RUTAS DE LA API (ENDPOINTS)
+# ------------------------------------------------------------------------------
+
 
 # ------------------------ RUTAS API PARA APP MÓVIL -------------------------------
 
@@ -260,6 +269,7 @@ def api_logout():
         app.logger.error(f"Error durante el logout para {current_user_email}: {e}")
         return jsonify({"msg": "Error interno del servidor durante el cierre de sesión."}), 500
 
+#===============================================
 @app.route("/api/protected", methods=["GET"])
 @jwt_required()
 def protected():
@@ -297,6 +307,7 @@ def update_fcm_token():
         app.logger.error(f"Error al actualizar token FCM: {e}")
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
+#========================================================
 @app.route("/api/events/add", methods=["POST"])
 def add_event():
     try:
@@ -372,7 +383,7 @@ def get_event_history():
         app.logger.error(f"Error al obtener historial de eventos: {e}")
         return jsonify({"msg": f"Error interno del servidor: {str(e)}"}), 500
 
-#---------- API para obtener los datos para el dashboard ---------------
+#==================== API para obtener los datos para el dashboard ===================
 @app.route('/api/dashboard_data', methods=['GET'])
 @jwt_required()
 def get_dashboard_data():
