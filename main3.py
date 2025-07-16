@@ -19,10 +19,10 @@ import redis
 
 # Inicializaciones básicas
 app = Flask(__name__)
-app.secret_key = 'supersecretkey'  # Cambia esto por algo más seguro en producción
+app.secret_key = 'supersecretkey'  
 
 # Configuración JWT
-app.config["JWT_SECRET_KEY"] = "tu_clave_jwt_super_segura_aqui" # ¡CAMBIA ESTO! Debe ser la misma clave que usaste antes.
+app.config["JWT_SECRET_KEY"] = "clave_jwt_super_segura"
 jwt = JWTManager(app)
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=30)
 
